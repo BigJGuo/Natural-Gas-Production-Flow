@@ -1,0 +1,369 @@
+# Meter point map — verified 2026-05-27 against live EBB postings.
+#
+# Scraper → portal lookup:
+#   kmi          → pipeline2.kindermorgan.com  (NGPL, EEC, TGP, SNG via code= param)
+#   williams     → 1line.williams.com           (Transco OAC, BUID=80)
+#   williams_nwp → 1line.williams.com           (Northwest Pipeline OAC, BUID=82)
+#   tcenergy     → delegates to KMI with code=TGP
+#   enbridge     → rtba.enbridge.com            (TETCO daily snapshot CSV)
+#   et_tgc       → tgcmessenger.energytransfer.com    (legacy alias: Trunkline only)
+#   et_ipost     → twtransfer.energytransfer.com      (TGC, TW, FEP, PEPL, FGT — interstates)
+#   tceconnects  → ebb.tceconnects.com          (Columbia Gas (TCO), Columbia Gulf (CGT), ANR)
+#   iroquois     → iol.iroquois.com             (Iroquois Gas Transmission OAC)
+#
+# A "terminal" here is either an LNG export terminal, a Mexico-border delivery point,
+# or a Canada-border crossing point. Direction='delivery' means gas leaving the US
+# (LNG feed, Mexico export, Canada export). Direction='receipt' means imports from
+# Canada into the US (Sumas, Emerson). nameplate_mmcfd reflects pipeline capacity
+# at that border or LNG facility (used only by validators.py for sanity checks).
+
+terminals:
+  # =========================================================================
+  # LNG export terminals
+  # =========================================================================
+  - name: Sabine Pass
+    state: LA
+    nameplate_mmcfd: 4800   # Cheniere SPLNG Trains 1-6 design output (~4.8 Bcf/d feedgas)
+    feeds:
+      # NGPL feed (~800 MMcf/d typical)
+      - scraper: kmi
+        pipeline: NGPL
+        pipeline_code: NGPL
+        meter_id: "46622"
+        location_name: "SPLIQ/NGPL SABINE PASS LIQUEFACTION"
+        direction: delivery
+      # KMLP feed — the single largest Sabine Pass feed (~1.2 Bcf/d)
+      # KM Louisiana Pipeline (KMLP) delivers directly to the SPLNG plant in Cameron Parish.
+      - scraper: kmi
+        pipeline: KMLP
+        pipeline_code: KMLP
+        meter_id: "49448"
+        location_name: "SPLIQ/KMLP SP LIQUEFACTION CAMERON"
+        direction: delivery
+      # TETCO feed via Kinder Morgan LNG interconnect (Evangeline Parish, LA)
+      - scraper: enbridge
+        pipeline: TETCO
+        pipeline_code: TE
+        meter_id: "74568"
+        location_name: "Kinder Morgan LNG Del"
+        direction: delivery
+      # Trunkline → Creole Trail interconnect (Beauregard Parish, LA)
+      - scraper: et_ipost
+        pipeline: Trunkline-Creole Trail
+        pipeline_code: TGC
+        meter_id: "82742"
+        location_name: "BEAUREGARD PARISH INCT - CHENIERE CREOLE TRAIL"
+        direction: delivery
+      # NOTE: Cheniere Creole Trail direct EBB — NOT publicly accessible.
+      # KMLP and the Trunkline interconnect now capture most of the unaccounted
+      # ~1.5-2.0 Bcf/d that was missing before (per 2026-05-22 note).
+
+  - name: Corpus Christi
+    state: TX
+    nameplate_mmcfd: 2900   # CCL Stage 1 + Stage 3 (~2.6 Bcf/d) + future expansions buffer
+    feeds:
+      - scraper: kmi
+        pipeline: NGPL
+        pipeline_code: NGPL
+        meter_id: "48934"
+        location_name: "CCCPL/NGPL SINTON SAN PATRICIO"
+        direction: delivery
+      # Cheniere Corpus Christi Pipeline (CCPL): no public EBB.
+      # Agua Dulce → Corpus Christi Pipeline (separate from CCPL Stage III feedgas line)
+      # is Cheniere-owned and not publicly posted. The NGPL/Sinton meter captures
+      # the NGPL contribution; remaining feed is via Cheniere's private CCPL.
+
+  - name: Freeport LNG
+    state: TX
+    nameplate_mmcfd: 2100
+    feeds:
+      - scraper: williams
+        pipeline: Transco
+        pipeline_code: TRANSCO
+        meter_id: "9009310"
+        location_name: "LIGHTHOUSE ROAD"
+        direction: delivery
+      - scraper: enbridge
+        pipeline: TETCO
+        pipeline_code: TE
+        meter_id: "79999"
+        location_name: "STRATTON RIDGE"
+        direction: delivery
+
+  - name: Cameron LNG
+    state: LA
+    nameplate_mmcfd: 1700
+    feeds:
+      - scraper: tcenergy
+        pipeline: TGP
+        pipeline_code: TGP
+        meter_id: "49446"
+        location_name: "CAM IPL/TGP BANKEN RD"
+        direction: delivery
+      - scraper: enbridge
+        pipeline: TETCO
+        pipeline_code: TE
+        meter_id: "73882"
+        location_name: "Sempra/Cameron"
+        direction: delivery
+      - scraper: tceconnects
+        pipeline: Columbia Gulf
+        pipeline_code: CGT
+        meter_id: "4246"
+        location_name: "Cameron LNG"
+        direction: delivery
+
+  - name: Cove Point
+    state: MD
+    nameplate_mmcfd: 750
+    feeds:
+      # Transco Pleasant Valley MP 1586.2 — Williams Transco delivers ~646 MMcf/d
+      # at the Pleasant Valley, MD interconnect with Cove Point Pipeline.
+      # This is the dominant feed for Cove Point LNG. Verified 2026-05-27.
+      - scraper: williams
+        pipeline: Transco
+        pipeline_code: TRANSCO
+        meter_id: "1095059"
+        location_name: "PLEASANT VALLEY"
+        direction: delivery
+      # NOTE: Cove Point Pipeline (88-mile dedicated line, Berkshire-owned) is
+      # NOT publicly posted. The Pleasant Valley meter on Transco captures the
+      # primary upstream feed. Smaller flows may also come via Dominion Energy
+      # Transmission (DTI) — not currently scraped.
+
+  - name: Elba Island
+    state: GA
+    nameplate_mmcfd: 350
+    feeds:
+      - scraper: kmi
+        pipeline: Elba Express
+        pipeline_code: EEC
+        meter_id: "938000"
+        location_name: "SLNG/EEC CHATHAM"
+        direction: delivery
+
+  - name: Calcasieu Pass
+    state: LA
+    nameplate_mmcfd: 1500
+    feeds: []
+      # Venture Global TransCameron Pipeline — shipper-private, no public EBB.
+      # No interstate-pipeline interconnect currently scrapeable. Free
+      # alternative: EIA monthly LNG exports (calibration module already uses this).
+
+  - name: Plaquemines
+    state: LA
+    nameplate_mmcfd: 2000
+    feeds:
+      - scraper: tcenergy
+        pipeline: TGP
+        pipeline_code: TGP
+        meter_id: "55833"
+        location_name: "VG GATOR/TGP EVANGELINE PASS DELIVERY"
+        direction: delivery
+      - scraper: tceconnects
+        pipeline: Columbia Gulf
+        pipeline_code: CGT
+        meter_id: "4267"
+        location_name: "Wilkinson Bayou"
+        direction: delivery
+
+  - name: Golden Pass
+    state: TX
+    nameplate_mmcfd: 2500
+    feeds: []
+      # Golden Pass Pipeline LLC (Kinder Morgan / Exxon JV) operates 70-mile
+      # pipeline to GP LNG. Postings hosted on gasnom.com/ip/goldenpass/
+      # (NOT on pipeline2.kindermorgan.com). EBB structure uses ColdFusion
+      # frames and is browser-only. NEEDS: dedicated scraper (gasnom.py) using
+      # Playwright OR direct fetch of body.cfm with session cookies. Train 1
+      # first cargo shipped Jan 2025; ramping to ~2.5 Bcf/d feedgas.
+
+  # =========================================================================
+  # Mexico export points (gas crossing US → Mexico)
+  # =========================================================================
+
+  # Sierrita Gas Pipeline (KM) — Tucson AZ to Sasabe, AZ-Mexico border.
+  # Feeds CFE Mexico's interconnect (~200 MMcf/d nameplate; currently ~26 MMcf/d).
+  - name: Mexico - Sasabe (Sierrita)
+    state: AZ
+    nameplate_mmcfd: 200
+    feeds:
+      - scraper: kmi
+        pipeline: Sierrita
+        pipeline_code: SGP
+        meter_id: "47698"
+        location_name: "GASDEAGU/SIERRITA SASABE PIMA"
+        direction: delivery
+
+  # El Paso Natural Gas → multiple Mexico delivery points.
+  # All meters confirmed via EPNG OpAvailPoint download 2026-05-26 evening.
+  - name: Mexico - North Baja (EPNG)
+    state: AZ
+    nameplate_mmcfd: 800   # North Baja Pipeline interconnect capacity
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "301693"
+        location_name: "NBAJA/EPNG (INORBAJA) NORTH BAJA"
+        direction: delivery
+
+  - name: Mexico - Samalayuca (EPNG via IEnova)
+    state: TX
+    nameplate_mmcfd: 800
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "314910"
+        location_name: "IENOVA/EPNG (ISAMLELP) GASODUCTOS S"
+        direction: delivery
+
+  - name: Mexico - Cananea (EPNG via Douglas)
+    state: AZ
+    nameplate_mmcfd: 200
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "314946"
+        location_name: "MXCANCOB/EPNG (IDOUGLAS) MEX COBRE"
+        direction: delivery
+
+  - name: Mexico - Willcox (EPNG to CENAGAS)
+    state: AZ
+    nameplate_mmcfd: 100
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "398669"
+        location_name: "CENAGAS/EPNG (IMEXWIL) WILLMEX"
+        direction: delivery
+
+  - name: Mexico - El Fresnal (EPNG to CFE)
+    state: TX
+    nameplate_mmcfd: 200
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "398666"
+        location_name: "GASDEAGU/EPNG (ICFEAGUA) EL FRESNAL"
+        direction: delivery
+
+  # KM Tejas Pipeline (KMTP) is a Texas intrastate that delivers to Mexico via
+  # multiple downstream interconnects (Comanche Trail, Roadrunner, etc).
+  # KMTP itself is intrastate (no public OAC), but EPNG delivers TO KMTP at the
+  # Mendoza Trail interconnect — capturing that gives us the KMTP-bound volume.
+  - name: Mexico - Mendoza Trail (EPNG to KMTP)
+    state: TX
+    nameplate_mmcfd: 200
+    feeds:
+      - scraper: kmi
+        pipeline: EPNG
+        pipeline_code: EPNG
+        meter_id: "48148"
+        location_name: "KMTP/EPNG (IMNDZTRL) MENDOZA TRAIL"
+        direction: delivery
+
+  # Mexico exports not yet covered (need future work):
+  #   - NET Mexico Pipeline (Agua Dulce → Brownsville)        — TX intrastate, no public OAC
+  #   - Trans-Pecos Pipeline (Waha → Presidio)                — TX intrastate, no public OAC
+  #   - Comanche Trail Pipeline (Waha → San Elizario)         — TX intrastate, no public OAC
+  #   - Valley Crossing (Agua Dulce → Brownsville → Sur de TX) — TX intrastate, no public OAC
+  #   - Roadrunner Gas Transmission (Waha → San Elizario)     — interstate; ONEOK 50% owned;
+  #                                                              EBB at oneok.com requires new scraper
+  # For these intrastates: CENAGAS daily import-by-point reports
+  # (https://www.cenagas.gob.mx) are the authoritative free daily source.
+
+  # =========================================================================
+  # Canada border crossings
+  # =========================================================================
+
+  # Tennessee Gas Pipeline at Niagara River, Niagara County, NY.
+  # Since 2012 this point has REVERSED — TGP now delivers TO TC Energy's
+  # Canadian Mainline at the Niagara River (was historically a receipt from Canada).
+  # Loc 421079: ~540 MMcf/d delivery confirmed 2026-05-26.
+  - name: Canada - Niagara (TGP delivery to TC Mainline)
+    state: NY
+    nameplate_mmcfd: 600
+    feeds:
+      - scraper: kmi
+        pipeline: TGP
+        pipeline_code: TGP
+        meter_id: "421079"
+        location_name: "TRANSCAN/TGP UDP NIAGARA RIVER DELI"
+        direction: delivery
+      # The bi-directional meter at Chippawa (Niagara Falls Ontario) shows up as
+      # Loc 410902 (~18 MMcf/d, BD flow). Captures Chippawa reverse flow since 2015.
+      - scraper: kmi
+        pipeline: TGP
+        pipeline_code: TGP
+        meter_id: "410902"
+        location_name: "TRANSCAN/TGP UDP NIAGARA RIVER NIAG"
+        direction: delivery
+
+  # Iroquois — connects TC Energy Canadian Mainline (Waddington NY) to NYC area.
+  # Bi-directional since 2017; periodic imports from 2018.
+  # Scraped via Playwright (Imperva bot protection on iol.iroquois.com).
+  # Meter IDs verified 2026-05-27.
+  - name: Canada - Waddington (Iroquois)
+    state: NY
+    nameplate_mmcfd: 1700
+    feeds:
+      - scraper: iroquois
+        pipeline: Iroquois
+        pipeline_code: IGT
+        meter_id: "2250"
+        location_name: "Waddington"
+        direction: receipt
+      - scraper: iroquois
+        pipeline: Iroquois
+        pipeline_code: IGT
+        meter_id: "2256"
+        location_name: "Brookfield"
+        direction: delivery
+
+  # Empire Pipeline (National Fuel Gas) — Chippawa NY to Empire State Pipeline
+  # Bi-directional with TC Energy Canadian Mainline at Chippawa border.
+  - name: Canada - Chippawa (Empire)
+    state: NY
+    nameplate_mmcfd: 850
+    feeds: []
+      # NEEDS scraper: empire (empirepipeline.com). National Fuel Gas operates.
+      # EBB at empireebb.nfgsc.com — typically ASP.NET WebForms.
+
+  # Northwest Pipeline (Williams) — Sumas WA border crossing.
+  # Imports from BC into PNW. Loc 297 "SUMAS RECEIPT" — confirmed 1,053,645 Dth/d
+  # receipt on 2026-05-27 (~1.05 Bcf/d). Design capacity 1,400,209 Dth/d.
+  - name: Canada - Sumas (Northwest)
+    state: WA
+    nameplate_mmcfd: 1400
+    feeds:
+      - scraper: williams_nwp
+        pipeline: Northwest Pipeline
+        pipeline_code: NWP
+        meter_id: "297"
+        location_name: "SUMAS RECEIPT"
+        direction: receipt
+      # Kingsgate Receipt (Loc TBD via first run) — secondary BC import point
+      # in eastern WA/ID. Currently smaller volumes than Sumas.
+
+  # Emerson MN — Viking Pipeline (TC Energy) + Great Lakes Gas Transmission
+  # + Northern Border Pipeline (ONEOK). Major WCSB-to-Midwest receipt point.
+  - name: Canada - Emerson (Viking/GreatLakes/NorthernBorder)
+    state: MN
+    nameplate_mmcfd: 4000   # Combined nameplate of all three pipelines
+    feeds:
+      # Northern Border Pipeline is on TC eConnects (asset code TBD).
+      # Viking + Great Lakes need TC Energy InfoPost scraper (separate from KMI).
+      # Currently empty — feeds added as scrapers are built.
+
+# Part-6 US-total reasonableness bounds.
+# Bumped to accommodate Mexico + Canada flows. LNG-only band was 8-13 Bcf/d.
+# Combined US flows (LNG + Mexico exports + Canada exports + Canada imports as
+# net delivery) sums to roughly 20-30 Bcf/d.
+us_total_bounds_mmcfd:
+  min: 10000
+  max: 30000
