@@ -23,16 +23,21 @@ The OAC grid renders as an ExtJS panel with columns:
 
 Volumes are in Dth/d. Divide by 1000 for MMcf/d.
 
-Canonical meter points for this scraper:
-  Loc 90 / Waddington — Canadian-border RECEIPT (imports from TC Mainline)
-  Loc 226 / Brookfield — Canadian-border DELIVERY (exports to TC Mainline)
+Canonical meter points for this scraper (Loc IDs verified 2026-05-27, see YAML):
+  Loc 2250 / Waddington — Canadian-border RECEIPT (imports from TC Mainline)
+  Loc 2256 / Brookfield — Canadian-border DELIVERY (exports to TC Mainline)
+
+Direction note: the OAC grid's "Flow Ind" column is "Y"/"N" (active/inactive),
+NOT "R"/"D", so direction is NOT read from the grid — each meter's direction
+comes from meter_points.yaml. _dir() handles the Y/N case explicitly and returns
+None (falls back to the configured direction) rather than pretending to parse it.
 """
 from __future__ import annotations
 
 import logging
 import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -214,7 +219,7 @@ def _match_meters(
     source_url: str,
 ) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     rows = [r for r in rows if r]
     for mp in meters:
         match = _row_match(rows, mp)
@@ -284,9 +289,16 @@ def _parse_number(s) -> float | None:
 
 
 def _dir(f: str) -> Direction | None:
-    f_low = (f or "").lower()
-    if "receipt" in f_low or f_low.startswith("r"):
+    """Iroquois OAC has no R/D direction column — Flow Ind is 'Y'/'N'
+    (active/inactive). So we cannot derive direction from the grid; return None
+    and let the caller fall back to the meter's configured direction. Kept as a
+    function (not deleted) so the contract is explicit rather than silently dead.
+    """
+    f_low = (f or "").strip().lower()
+    if f_low in ("y", "n", ""):
+        return None  # active/inactive flag, not a direction
+    if "receipt" in f_low or f_low == "r":
         return "receipt"
-    if "delivery" in f_low or f_low.startswith("d"):
+    if "delivery" in f_low or f_low == "d":
         return "delivery"
     return None

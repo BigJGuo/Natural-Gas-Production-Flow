@@ -15,11 +15,18 @@ from .calibration import eia as eia_mod
 from .config import Config, MeterPoint, load_config
 from .models import FlowRecord
 from .scrapers import SCRAPERS, BaseScraper, ScrapeContext
-from .storage.db import DEFAULT_DB_PATH, connect, terminal_totals, upsert_flows
+from .storage.db import (
+    DEFAULT_DB_PATH, connect, terminal_totals, terminal_totals_directional, upsert_flows,
+)
 from .storage.export import render_part4_text, write_part4_csv
 from .validators import validate
 
 EXPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "exports"
+
+# Scraper groups for the intraday tasks. FAST = plain-HTTP scrapers (seconds each);
+# SLOW = Playwright scrapers that launch headless Chromium (30-60s each).
+FAST_SCRAPERS = ["kmi", "williams", "williams_nwp", "tcenergy", "enbridge", "et_tgc", "et_ipost"]
+SLOW_SCRAPERS = ["tceconnects", "iroquois"]
 
 
 def _parse_date(s: str) -> date:
@@ -30,9 +37,34 @@ def _parse_date(s: str) -> date:
     return datetime.strptime(s, "%Y-%m-%d").date()
 
 
+def _auto_cycle() -> str:
+    """Pick the latest-posted gas cycle for *today* based on the US/Central clock.
+
+    Scheduled quantities post ~2h after each nomination deadline, so during the
+    gas day the most-recent complete cycle shifts: Evening (overnight) → Intraday 1
+    (midday) → Intraday 2 (afternoon) → Intraday 3 (evening).
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        hour = datetime.now(ZoneInfo("America/Chicago")).hour
+    except Exception:
+        hour = datetime.now().hour
+    if hour < 12:
+        return "evening"
+    if hour < 16:
+        return "intraday1"
+    if hour < 21:
+        return "intraday2"
+    return "intraday3"
+
+
 def _build_scrapers(cfg: Config, only: str) -> dict[BaseScraper, list[MeterPoint]]:
     if only == "all":
         names = list(SCRAPERS.keys())
+    elif only == "fast":
+        names = list(FAST_SCRAPERS)
+    elif only == "slow":
+        names = list(SLOW_SCRAPERS)
     else:
         names = [only]
     out: dict[BaseScraper, list[MeterPoint]] = {}
@@ -58,23 +90,32 @@ def cli(verbose: bool) -> None:
 
 
 @cli.command()
-@click.option("--date", "date_s", default="today", help='Gas day. "today", "yesterday", or YYYY-MM-DD.')
+@click.option("--date", "date_s", default="today",
+              help='Gas day: "today", "yesterday", or YYYY-MM-DD. NOTE: kmi/tcenergy, '
+                   'williams and enbridge honor the date; et_ipost, williams_nwp, '
+                   'tceconnects and iroquois only return the most-recent posted '
+                   'snapshot (their portals expose no date selector), so backfill '
+                   'for those is not possible.')
 @click.option("--cycle", default="evening",
-              type=click.Choice(["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed"]),
-              show_default=True)
+              type=click.Choice(["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed", "auto"]),
+              show_default=True,
+              help='Gas cycle. "auto" picks the latest-posted cycle by US/Central clock.')
 @click.option("--pipeline", "scraper_only", default="all",
               type=click.Choice([
                   "kmi", "williams", "williams_nwp", "tcenergy",
                   "enbridge", "et_tgc", "et_ipost", "tceconnects",
-                  "iroquois", "all",
+                  "iroquois", "all", "fast", "slow",
               ]),
-              show_default=True, help="Run one scraper or all.")
+              show_default=True,
+              help='Run one scraper, "all", "fast" (HTTP only), or "slow" (Playwright only).')
 @click.option("--delay", "request_delay_s", default=2.5, type=float, show_default=True,
               help="Per-request sleep between HTTP calls (seconds).")
 def pull(date_s: str, cycle: str, scraper_only: str, request_delay_s: float) -> None:
     """Scrape pipeline EBBs and upsert flows into SQLite."""
     cfg = load_config()
     gas_day = _parse_date(date_s)
+    if cycle == "auto":
+        cycle = _auto_cycle()
     click.echo(f"Pulling {scraper_only} scrapers for {gas_day} cycle={cycle}")
 
     scrapers = _build_scrapers(cfg, scraper_only)
@@ -95,8 +136,10 @@ def pull(date_s: str, cycle: str, scraper_only: str, request_delay_s: float) -> 
             total_inserted += inserted
             click.echo(f"     ok: {inserted} rows upserted")
 
-        # Run validators against whatever ended up in the DB for this day/cycle
-        totals = terminal_totals(conn, gas_day, cycle)
+        # Run validators against whatever ended up in the DB for this day/cycle.
+        # Direction-aware so Canada imports (Sumas/Waddington) count their
+        # receipt side instead of being flagged as near-zero deliveries.
+        totals = terminal_totals_directional(conn, gas_day, cycle)
         for issue in validate(cfg, totals):
             click.echo(f"  ! {issue.severity}: {issue.message}", err=True)
 
@@ -134,6 +177,45 @@ def show(date_s: str, cycle: str) -> None:
         click.echo(render_part4_text(conn, gas_day, cycle))
 
 
+@cli.command()
+@click.option("--date", "date_s", default="today")
+@click.option("--cycle", default="evening",
+              type=click.Choice(["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed", "auto"]))
+@click.option("--only-alerts", is_flag=True, help="Show only terminals with a notable/significant deviation.")
+def changes(date_s: str, cycle: str, only_alerts: bool) -> None:
+    """Show per-terminal day/week/month deviations (DoD / WoW / MoM)."""
+    from .analysis.changes import compute_changes, NOTABLE_PCT
+    gas_day = _parse_date(date_s)
+    if cycle == "auto":
+        cycle = _auto_cycle()
+    with connect() as conn:
+        rows = compute_changes(conn, gas_day, cycle)
+
+    def fmt(h) -> str:
+        if h.pct_delta is None:
+            return f"{'n/a':>9}  ({h.note})"
+        arrow = "^" if h.pct_delta > 0 else "v" if h.pct_delta < 0 else "="
+        tag = {"significant": "!!", "notable": "!", "ok": ""}[h.severity]
+        return f"{arrow}{h.pct_delta:+6.1f}% {tag:<2} ({h.abs_delta:+,.0f})"
+
+    click.echo(f"Deviations for {gas_day} cycle={cycle}  (DoD=vs prior day, "
+               f"WoW=7d mean vs prior 7d, MoM=30d mean vs prior 30d)\n")
+    header = f"{'TERMINAL':<46} {'CURRENT':>9}   {'DoD':<26} {'WoW':<26} {'MoM':<26}"
+    click.echo(header)
+    click.echo("-" * len(header))
+    shown = 0
+    for tc in rows:
+        if only_alerts and tc.max_severity in ("ok", "none"):
+            continue
+        cur = f"{tc.current:,.0f}" if tc.current is not None else "n/a"
+        click.echo(f"{tc.terminal[:46]:<46} {cur:>9}   "
+                   f"{fmt(tc.dod):<26} {fmt(tc.wow):<26} {fmt(tc.mom):<26}")
+        shown += 1
+    if shown == 0:
+        click.echo("(no terminals to show)")
+    click.echo(f"\nThresholds: ! >={NOTABLE_PCT:.0f}% (notable), !! >=25% (significant).")
+
+
 @cli.command(name="eia-fetch")
 @click.option("--weeks", default=52, type=int, show_default=True,
               help="How many weeks of EIA history to fetch.")
@@ -153,6 +235,27 @@ def eia_fetch(weeks: int) -> None:
         n = eia_mod.upsert_to_db(conn, df)
     click.echo(f"EIA: upserted {n} weekly rows. Latest week ending: {df['period'].iloc[-1]}, "
                f"{df['us_lng_bcfd'].iloc[-1]:.2f} Bcf/d")
+
+
+@cli.command(name="ais-seed")
+@click.option("--csv", "csv_path", required=True,
+              help="CSV of LNG carriers (header: mmsi,name,length_m,width_m).")
+def ais_seed(csv_path: str) -> None:
+    """Bulk-load a vetted LNG-carrier fleet list into the registry.
+
+    Each row is flagged is_lng_carrier=1 so a single AIS position report (MMSI
+    only) classifies it — no need to catch the vessel's static broadcast. The
+    registry also self-seeds from observed calls, so this is optional but gives
+    instant coverage if you have a vetted list.
+    """
+    from pathlib import Path as _Path
+    p = _Path(csv_path)
+    if not p.exists():
+        raise click.ClickException(f"CSV not found: {p}")
+    with connect() as conn:
+        from .calibration.ais import seed_fleet_from_csv
+        loaded, skipped = seed_fleet_from_csv(conn, p)
+    click.echo(f"AIS seed: loaded {loaded} carriers, skipped {skipped} bad rows.")
 
 
 @cli.command(name="ais-collect")

@@ -21,7 +21,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -48,10 +48,33 @@ DROPDOWN_NAME = "ctl00$MainContent$ctl01$oaDefault$ucSelector$ddlSelector"
 DOWNLOAD_TARGET = "ctl00$MainContent$ctl01$oaDefault$hlDown$LinkButton1"
 
 
+def select_tetco_option(option_values: list[str], prefix: str,
+                        gas_day_token: str) -> str | None:
+    """Choose the TETCO dropdown option for the requested gas day.
+
+    Priority: (1) the preferred cycle prefix for that day, (2) any snapshot for
+    that day (first listed = most recent), (3) None. It deliberately NEVER falls
+    back to the newest available option — the old code did `opts[0]`, which on
+    the current portal (only prior-day TIMELY snapshots) silently stored
+    wrong-day data. Returning None makes the caller treat the day as missing.
+    Pure function so the regression is unit-testable.
+    """
+    for val in option_values:
+        if val.startswith(f"{prefix}_") and gas_day_token in val:
+            return val
+    for val in option_values:
+        if gas_day_token in val:
+            return val
+    return None
+
+
 class EnbridgeTETCOScraper(BaseScraper):
     name = "enbridge_tetco"
 
     def fetch(self, ctx: ScrapeContext) -> list[FlowRecord]:
+        return self.with_retry(lambda: self._fetch_impl(ctx))
+
+    def _fetch_impl(self, ctx: ScrapeContext) -> list[FlowRecord]:
         if not ctx.meter_points:
             return []
 
@@ -92,21 +115,14 @@ class EnbridgeTETCOScraper(BaseScraper):
         if not prefix:
             raise ScraperError(f"TETCO: unsupported cycle {ctx.cycle!r}")
         gas_day_token = ctx.gas_day.strftime("%Y-%m-%d")
-        # Find matching option: value starts with PREFIX_ + gas_day; pick most recent (first listed)
-        chosen = None
-        for val, _ in opts:
-            if val.startswith(f"{prefix}_") and gas_day_token in val:
-                chosen = val
-                break
+        chosen = select_tetco_option([str(v) for v, _ in opts], prefix, gas_day_token)
         if not chosen:
-            # Fallback: any option containing gas_day with matching prefix (no underscore strictness)
-            for val, _ in opts:
-                if prefix in val and gas_day_token in val:
-                    chosen = val
-                    break
-        if not chosen:
-            log.warning("TETCO: no %s option for gas_day %s; using first available", prefix, gas_day_token)
-            chosen = opts[0][0]
+            sample = [v for v, _ in opts[:5]]
+            raise ParseError(
+                f"TETCO: no snapshot for gas_day {gas_day_token}; the portal has "
+                f"no option for that day (sample: {sample}). Treating as missing "
+                f"rather than storing a wrong-day value."
+            )
         form_data[DROPDOWN_NAME] = chosen
         log.info("TETCO: selected cycle option %s", chosen)
 
@@ -148,7 +164,7 @@ class EnbridgeTETCOScraper(BaseScraper):
 
 def _match_meters(df: pd.DataFrame, ctx: ScrapeContext, source_url: str) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in ctx.meter_points:
         match = _row_match(df, mp)
         if match is None:

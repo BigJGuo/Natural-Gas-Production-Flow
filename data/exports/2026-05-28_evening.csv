@@ -1,0 +1,35 @@
+Gas Day: 2026-05-28,Cycle: evening
+Terminal,Pipeline,Meter Point,MMcf/d,Direction
+Sabine Pass,KMLP,SPLIQ/KMLP SP LIQUEFACTION CAMERON,1399.5,delivery
+Sabine Pass,NGPL,SPLIQ/NGPL SABINE PASS LIQUEFACTION,646.5,delivery
+Sabine Pass,TETCO,Kinder Morgan LNG Del (73568 Receipt),246.5,delivery
+Sabine Pass,Trunkline-Creole Trail,BEAUREGARD PARISH INCT - CHENIERE CREOLE TRAIL PL,274.8,delivery
+,SABINE PASS TOTAL,,2567.2,
+
+Corpus Christi,NGPL,CCCPL/NGPL SINTON SAN PATRICIO,623.2,delivery
+,CORPUS CHRISTI TOTAL,,623.2,
+
+Freeport LNG,TETCO,STRATTON RIDGE,136.4,delivery
+Freeport LNG,Transco,LIGHTHOUSE ROAD M4662 MP 13,1146.8,delivery
+,FREEPORT LNG TOTAL,,1283.2,
+
+Cameron LNG,Columbia Gulf,Cameron LNG,0.0,delivery
+Cameron LNG,TETCO,Sempra/Cameron -Gulf Market,287.5,delivery
+Cameron LNG,TGP,CAM IPL/TGP BANKEN RD AT  HWY 27 DE,709.9,delivery
+,CAMERON LNG TOTAL,,997.4,
+
+Cove Point,Transco,PLEASANT VALLEY Del MP 1586.2,676.2,delivery
+,COVE POINT TOTAL,,676.2,
+
+Elba Island,Elba Express,SLNG/EEC CHATHAM,120.2,delivery
+,ELBA ISLAND TOTAL,,120.2,
+
+,CALCASIEU PASS TOTAL,,0.0,
+
+Plaquemines,Columbia Gulf,Wilkinson Bayou,651.3,delivery
+Plaquemines,TGP,VG GATOR/TGP EVANGELINE PASS DELIVE,1839.9,delivery
+,PLAQUEMINES TOTAL,,2491.1,
+
+,GOLDEN PASS TOTAL,,0.0,
+
+,U.S. TOTAL FEEDGAS,,8758.5,

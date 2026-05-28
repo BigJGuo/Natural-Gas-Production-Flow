@@ -14,6 +14,7 @@ so the dashboard automatically picks up new terminals as you add them to the YAM
 from __future__ import annotations
 
 import sqlite3
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -28,6 +29,10 @@ from dash import Input, Output, State, dash_table, dcc, html
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "data" / "feedgas.db"
 YAML_PATH = ROOT / "src" / "ng_feedgas" / "config" / "meter_points.yaml"
+
+# Make the ng_feedgas package importable so we reuse the deviation logic in
+# src/ng_feedgas/analysis/changes.py rather than duplicating it here.
+sys.path.insert(0, str(ROOT / "src"))
 
 
 # ---------- terminal taxonomy ----------
@@ -61,11 +66,20 @@ def load_terminal_catalog() -> tuple[dict[str, float], list[str], dict[str, str]
 
 NAMEPLATES, TERMINAL_ORDER, TERMINAL_CATEGORY = load_terminal_catalog()
 CATEGORIES = ["U.S. LNG", "Mexico exports", "Canada border"]
+ALL_REGIONS = "All regions"
 CATEGORY_COLORS = {
     "U.S. LNG":        "#2E86AB",
     "Mexico exports":  "#E76F51",
     "Canada border":   "#2A9D8F",
+    ALL_REGIONS:       "#343a40",
 }
+
+
+def _region_mask(frame: pd.DataFrame, category: str) -> pd.Series:
+    """Boolean mask selecting rows for a region tab; ALL_REGIONS selects all."""
+    if category == ALL_REGIONS:
+        return pd.Series(True, index=frame.index)
+    return frame["category"] == category
 
 
 # Per-terminal data-confidence tier. Drives the green/amber/gray outlines.
@@ -189,22 +203,6 @@ def load_ais_inference() -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def signed_mmcfd(row: pd.Series) -> float:
-    """Convert direction → signed flow.
-
-    For LNG / Mexico exports / Canada exports: delivery is positive (gas leaving US).
-    For Canada imports (Sumas/Waddington): receipt is positive (gas entering US).
-    """
-    val = row["mmcfd"]
-    if pd.isna(val):
-        return 0.0
-    if row["direction"] == "delivery":
-        return float(val)
-    if row["direction"] == "receipt":
-        return float(val)
-    return 0.0
-
-
 def terminal_totals(df: pd.DataFrame) -> pd.DataFrame:
     """Per-day, per-terminal sum.
 
@@ -234,12 +232,9 @@ def terminal_totals(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _is_canada_import(terminal: str) -> bool:
-    """True for Canada→US receipt-side terminals."""
-    return terminal in {
-        "Canada - Sumas (Northwest)",
-        "Canada - Waddington (Iroquois)",
-        "Canada - Emerson (Viking/GreatLakes/NorthernBorder)",
-    }
+    """True for Canada→US receipt-side terminals (shared config set)."""
+    from ng_feedgas.config import CANADA_IMPORT_TERMINALS
+    return terminal in CANADA_IMPORT_TERMINALS
 
 
 def category_daily(df: pd.DataFrame, cycle: str) -> pd.DataFrame:
@@ -265,6 +260,8 @@ EMPTY_FIG = go.Figure().update_layout(
 
 
 def _terminal_order_for_category(category: str) -> list[str]:
+    if category == ALL_REGIONS:
+        return list(TERMINAL_ORDER)
     return [t for t in TERMINAL_ORDER if TERMINAL_CATEGORY.get(t) == category]
 
 
@@ -310,7 +307,7 @@ def fig_terminal_bars(df: pd.DataFrame, cycle: str, gas_day: date,
     """Terminal-by-terminal bar chart for a single category and gas day."""
     t = terminal_totals(df)
     today = t[(t["cycle"] == cycle) & (t["gas_day"] == gas_day)
-              & (t["category"] == category)]
+              & _region_mask(t, category)]
     order = _terminal_order_for_category(category)
     if today.empty or not order:
         return EMPTY_FIG
@@ -321,7 +318,7 @@ def fig_terminal_bars(df: pd.DataFrame, cycle: str, gas_day: date,
 
     # AIS overlay (only meaningful for LNG terminals)
     ais_map = {}
-    if category == "U.S. LNG" and ais_df is not None and not ais_df.empty:
+    if category in ("U.S. LNG", ALL_REGIONS) and ais_df is not None and not ais_df.empty:
         ais_today = ais_df[ais_df["gas_day"] == gas_day]
         ais_map = dict(zip(ais_today["terminal"], ais_today["est_feedgas_mmcfd"]))
     today["ais_est"] = today["terminal"].map(ais_map).fillna(0)
@@ -330,11 +327,17 @@ def fig_terminal_bars(df: pd.DataFrame, cycle: str, gas_day: date,
     today["conf"] = today["terminal"].map(CONFIDENCE).fillna("partial")
     outline_colors = [CONFIDENCE_COLOR[c] for c in today["conf"]]
     outline_widths = [4 if c == "high" else 2.5 for c in today["conf"]]
+    # In All-regions view, color each bar by its own region; otherwise one color.
+    if category == ALL_REGIONS:
+        bar_color = [CATEGORY_COLORS[TERMINAL_CATEGORY.get(t_, "U.S. LNG")]
+                     for t_ in today["terminal"]]
+    else:
+        bar_color = CATEGORY_COLORS[category]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=today["label"], y=today["mmcfd"],
         marker=dict(
-            color=CATEGORY_COLORS[category],
+            color=bar_color,
             line=dict(color=outline_colors, width=outline_widths),
         ),
         text=[f"{v:,.0f}" if v > 0 else "" for v in today["mmcfd"]],
@@ -395,7 +398,7 @@ def fig_terminal_bars(df: pd.DataFrame, cycle: str, gas_day: date,
 
 def fig_terminals_stack(df: pd.DataFrame, cycle: str, category: str) -> go.Figure:
     t = terminal_totals(df)
-    t = t[(t["cycle"] == cycle) & (t["category"] == category)].copy()
+    t = t[(t["cycle"] == cycle) & _region_mask(t, category)].copy()
     order = _terminal_order_for_category(category)
     if t.empty or not order:
         return EMPTY_FIG
@@ -419,7 +422,7 @@ def fig_terminals_stack(df: pd.DataFrame, cycle: str, category: str) -> go.Figur
 def fig_pipeline_breakdown(df: pd.DataFrame, cycle: str, gas_day: date,
                             category: str) -> go.Figure:
     today = df[(df["cycle"] == cycle) & (df["gas_day"] == gas_day)
-               & (df["category"] == category)].copy()
+               & _region_mask(df, category)].copy()
     if today.empty:
         return EMPTY_FIG
     today["label"] = today["terminal"].map(SHORT)
@@ -445,7 +448,7 @@ def fig_utilization(df: pd.DataFrame, cycle: str, gas_day: date,
                     category: str) -> go.Figure:
     t = terminal_totals(df)
     today = t[(t["cycle"] == cycle) & (t["gas_day"] == gas_day)
-              & (t["category"] == category)]
+              & _region_mask(t, category)]
     order = _terminal_order_for_category(category)
     if today.empty or not order:
         return EMPTY_FIG
@@ -486,6 +489,160 @@ def fig_utilization(df: pd.DataFrame, cycle: str, gas_day: date,
     return fig
 
 
+# ---------- deviation alerts (DoD / WoW / MoM) ----------
+
+_SEV_BG = {  # background colors for severity in the table
+    "significant": "#f8d7da",  # red
+    "notable":     "#fff3cd",  # amber
+}
+_SEV_FG = {"significant": "#842029"}
+
+
+def build_changes_table(gas_day: date, cycle: str):
+    """Return a dash_table.DataTable of per-terminal DoD/WoW/MoM deviations.
+
+    Reuses ng_feedgas.analysis.changes.compute_changes against the live DB.
+    """
+    try:
+        from ng_feedgas.analysis.changes import compute_changes
+    except Exception as exc:  # pragma: no cover
+        return html.P(f"Deviation module unavailable: {exc}", className="text-muted")
+
+    if not DB_PATH.exists():
+        return html.P("No data yet.", className="text-muted")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = compute_changes(conn, gas_day, cycle)
+
+    def _cell(h) -> str:
+        if h.pct_delta is None:
+            return "n/a"
+        arrow = "▲" if h.pct_delta > 0 else "▼" if h.pct_delta < 0 else "■"
+        return f"{arrow} {h.pct_delta:+.1f}%  ({h.abs_delta:+,.0f})"
+
+    records = []
+    for tc in rows:
+        records.append({
+            "terminal": tc.terminal,
+            "current": f"{tc.current:,.0f}" if tc.current is not None else "n/a",
+            "dod": _cell(tc.dod), "dod_sev": tc.dod.severity,
+            "wow": _cell(tc.wow), "wow_sev": tc.wow.severity,
+            "mom": _cell(tc.mom), "mom_sev": tc.mom.severity,
+        })
+
+    style_cond = []
+    for col in ("dod", "wow", "mom"):
+        for sev, bg in _SEV_BG.items():
+            rule = {"if": {"filter_query": f'{{{col}_sev}} = "{sev}"', "column_id": col},
+                    "backgroundColor": bg}
+            if sev in _SEV_FG:
+                rule["color"] = _SEV_FG[sev]
+                rule["fontWeight"] = "bold"
+            style_cond.append(rule)
+
+    return dash_table.DataTable(
+        data=records,
+        columns=[
+            {"name": "Terminal", "id": "terminal"},
+            {"name": "Current (MMcf/d)", "id": "current"},
+            {"name": "Day-over-Day", "id": "dod"},
+            {"name": "Week-over-Week", "id": "wow"},
+            {"name": "Month-over-Month", "id": "mom"},
+        ],
+        sort_action="native", filter_action="native",
+        style_cell={"padding": "8px", "fontFamily": "system-ui", "fontSize": 13,
+                    "textAlign": "left"},
+        style_header={"backgroundColor": "#343a40", "color": "white",
+                      "fontWeight": "bold"},
+        style_data_conditional=style_cond,
+        page_size=25,
+    )
+
+
+def build_ais_vessels_table(gas_day: date):
+    """Table of the actual vessels AIS detected near terminals on `gas_day`.
+
+    Shows name, size, and a transparent LNG-carrier verdict so you can see why
+    a hit counts (e.g. UMM SWAYYAH 295x47 = yes) or is suspect (a 209x23 barge
+    flagged only by length = 'maybe — narrow beam').
+    """
+    if not DB_PATH.exists():
+        return None
+    q = """
+        SELECT o.terminal,
+               COALESCE(NULLIF(TRIM(o.ship_name), ''), s.ship_name) AS name,
+               COALESCE(o.ship_type, s.ship_type) AS typ,
+               s.length_m, s.width_m,
+               COALESCE(s.is_lng_carrier, 0) AS is_lng_carrier,
+               MIN(o.sog) AS minsog, COUNT(*) AS obs
+        FROM ais_observations o
+        LEFT JOIN ais_ships s ON s.mmsi = o.mmsi
+        WHERE substr(o.captured_at, 1, 10) = ?
+        GROUP BY o.mmsi
+    """
+    with sqlite3.connect(DB_PATH) as conn:
+        df = pd.read_sql_query(q, conn, params=(gas_day.isoformat(),))
+    if df.empty:
+        return None
+
+    # Possible-LNG filter: drop vessels we know are small/non-LNG (tugs, pilots,
+    # crew boats). Keep large or unknown-size vessels. Mirrors the scanner-side
+    # filter so the table shows only plausible carriers, not the harbor fleet.
+    from ng_feedgas.calibration.ais import is_known_small, classify_lng_carrier
+    df = df[~df.apply(lambda r: is_known_small(r["typ"], r["length_m"]), axis=1)]
+    if df.empty:
+        return None
+
+    def verdict(r) -> str:
+        moored = (r["minsog"] is not None) and (r["minsog"] < 1.0)
+        is_carrier = classify_lng_carrier(
+            r["typ"], r["length_m"], r["width_m"], bool(r["is_lng_carrier"]))
+        length = r["length_m"] or 0
+        width = r["width_m"] or 0
+        if moored and is_carrier:
+            return "yes"
+        if moored and length >= 200 and width and width < 35:
+            return "maybe (narrow beam)"
+        if is_carrier:
+            return "transiting"
+        return "no"
+
+    df["verdict"] = df.apply(verdict, axis=1)
+    df["moored"] = df["minsog"].apply(lambda s: "moored" if (s is not None and s < 1) else f"{s:.0f} kn")
+    df["len_disp"] = df["length_m"].apply(lambda v: f"{v:.0f}" if v else "?")
+    df["beam_disp"] = df["width_m"].apply(lambda v: f"{v:.0f}" if v else "?")
+    # Carriers / candidates first, then by size
+    rank = {"yes": 0, "maybe (narrow beam)": 1, "transiting": 2, "no": 3}
+    df = df.sort_values(by=["verdict", "length_m"],
+                        key=lambda c: c.map(rank) if c.name == "verdict" else c,
+                        ascending=[True, False])
+
+    return dash_table.DataTable(
+        data=df[["terminal", "name", "typ", "len_disp", "beam_disp",
+                 "moored", "verdict", "obs"]].fillna("?").to_dict("records"),
+        columns=[
+            {"name": "Terminal", "id": "terminal"},
+            {"name": "Vessel", "id": "name"},
+            {"name": "AIS type", "id": "typ"},
+            {"name": "Length (m)", "id": "len_disp"},
+            {"name": "Beam (m)", "id": "beam_disp"},
+            {"name": "Status", "id": "moored"},
+            {"name": "LNG carrier?", "id": "verdict"},
+            {"name": "Obs", "id": "obs"},
+        ],
+        sort_action="native", filter_action="native",
+        style_cell={"padding": "6px", "fontFamily": "system-ui", "fontSize": 12},
+        style_header={"backgroundColor": "#264653", "color": "white", "fontWeight": "bold"},
+        style_data_conditional=[
+            {"if": {"filter_query": '{verdict} = "yes"'},
+             "backgroundColor": "#d1e7dd", "fontWeight": "bold"},
+            {"if": {"filter_query": '{verdict} = "maybe (narrow beam)"'},
+             "backgroundColor": "#fff3cd"},
+        ],
+        page_size=15,
+    )
+
+
 # ---------- KPI computation ----------
 
 def compute_kpis(df: pd.DataFrame, cycle: str, gas_day: date) -> dict:
@@ -510,6 +667,12 @@ def compute_kpis(df: pd.DataFrame, cycle: str, gas_day: date) -> dict:
         "delta": (float(today["mmcfd"].sum()) - float(prior["mmcfd"].sum()))
                  if not prior.empty else None,
     }
+    # Canada split: imports (receipt) vs exports (delivery). Summing the two as a
+    # single positive "net" was misleading — they're opposite flows.
+    can = df[(df["category"] == "Canada border") & (df["gas_day"] == gas_day)
+             & (df["cycle"] == cycle)]
+    out["canada_imports"] = float(can[can["direction"] == "receipt"]["mmcfd"].sum())
+    out["canada_exports"] = float(can[can["direction"] == "delivery"]["mmcfd"].sum())
     return out
 
 
@@ -552,7 +715,8 @@ app.layout = dbc.Container(fluid=True, children=[
             html.Label("Gas Day", className="fw-bold"),
             dcc.Dropdown(id="date-picker", clearable=False,
                          placeholder="Select gas day…"),
-            html.Small("Only days with scraped data are listed.",
+            html.Small("Days with scraped flow or AIS data. "
+                       "'(AIS only)' = vessel data but no pipeline pull yet.",
                        className="text-muted"),
         ], width=3),
         dbc.Col([
@@ -577,8 +741,9 @@ app.layout = dbc.Container(fluid=True, children=[
     dbc.Row(id="kpi-row", className="mb-3"),
     # Cross-region time series
     dbc.Row([dbc.Col(dcc.Graph(id="category-chart"), width=12)]),
-    # Region-specific tabs
-    dcc.Tabs(id="region-tabs", value="U.S. LNG", children=[
+    # Region-specific tabs (default: All regions = show everything)
+    dcc.Tabs(id="region-tabs", value=ALL_REGIONS, children=[
+        dcc.Tab(label="All regions", value=ALL_REGIONS),
         dcc.Tab(label="U.S. LNG", value="U.S. LNG"),
         dcc.Tab(label="Mexico exports", value="Mexico exports"),
         dcc.Tab(label="Canada border", value="Canada border"),
@@ -605,13 +770,26 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Col(dcc.Graph(id="terminals-stack-chart"), width=6),
         dbc.Col(dcc.Graph(id="pipeline-breakdown-chart"), width=6),
     ]),
+    # Deviation alerts (all regions, not filtered by tab)
+    html.Hr(className="mt-4"),
+    html.H4("Deviation Alerts — Day / Week / Month", className="mt-3"),
+    html.P([
+        "Change in captured flow per terminal: DoD = vs prior gas day; "
+        "WoW = trailing 7-day mean vs the prior 7 days; MoM = trailing 30-day "
+        "mean vs the prior 30. ",
+        html.B("Amber ≥10%, red ≥25%. "),
+        "For LNG terminals (lower-bound totals), trust the direction of change, "
+        "not the absolute level. WoW/MoM fill in as history accumulates.",
+    ], className="text-muted small"),
+    html.Div(id="changes-table-container"),
     # AIS vessel-tracking section (LNG only)
     html.Hr(className="mt-4"),
     html.H4("AIS Vessel Tracking (LNG terminals)", className="mt-3"),
     html.P([
-        "Inferred terminal activity from aisstream.io. Run ",
-        html.Code("python -m ng_feedgas ais-collect --duration 300"),
-        " hourly to populate (requires AISSTREAM_API_KEY).",
+        "Inferred LNG-carrier berth occupancy from aisstream.io, collected hourly "
+        "by the NG-Feedgas-AIS-Track scheduled task. ",
+        "Ships at berth > 0 means an LNG carrier was moored that day — a real "
+        "signal the amber (lower-bound) terminal totals can be cross-checked against.",
     ], className="text-muted small"),
     html.Div(id="ais-table-container"),
     html.H4("Raw flows (selected day)", className="mt-4"),
@@ -641,12 +819,18 @@ def reload_data(_n, cycle):
     if df.empty:
         return ([], [], [], [], None,
                 "No data loaded. Run python -m ng_feedgas pull first.")
-    # Distinct (gas_day, cycle) pairs — only offer dates that have data for the
-    # currently selected cycle. Otherwise dropdown options would include days
-    # that yield empty charts.
-    available = (df[df["cycle"] == cycle]["gas_day"].drop_duplicates()
-                   .sort_values(ascending=False).tolist())
-    options = [{"label": d.isoformat(), "value": d.isoformat()} for d in available]
+    # Offer dates that have flow data for the selected cycle, UNIONED with dates
+    # that have AIS inference (which is cycle-independent). AIS-only dates are
+    # tagged so the user knows the flow charts will be empty but AIS will show.
+    flow_days = set(df[df["cycle"] == cycle]["gas_day"].tolist())
+    ais_days = set(ais["gas_day"].tolist()) if not ais.empty else set()
+    all_days = sorted(flow_days | ais_days, reverse=True)
+    options = []
+    for d in all_days:
+        iso = d.isoformat()
+        tag = "" if d in flow_days else "  (AIS only)"
+        options.append({"label": iso + tag, "value": iso})
+    available = all_days
     selected = available[0].isoformat() if available else None
 
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -677,6 +861,7 @@ def reload_data(_n, cycle):
     Output("pipeline-breakdown-chart", "figure"),
     Output("flows-table-container", "children"),
     Output("ais-table-container", "children"),
+    Output("changes-table-container", "children"),
     Input("data-store", "data"),
     Input("eia-store", "data"),
     Input("ais-store", "data"),
@@ -689,7 +874,7 @@ def update_dashboard(data, eia_data, ais_data, picked_date, cycle, region):
         empty_kpis = [dbc.Col(kpi_card("--", "--"), width=3) for _ in range(4)]
         empty_table = html.P("No data available.", className="text-muted")
         return (empty_kpis, EMPTY_FIG, EMPTY_FIG, EMPTY_FIG, EMPTY_FIG,
-                EMPTY_FIG, empty_table, empty_table)
+                EMPTY_FIG, empty_table, empty_table, empty_table)
 
     df = pd.DataFrame(data)
     df["gas_day"] = pd.to_datetime(df["gas_day"]).dt.date
@@ -728,16 +913,16 @@ def update_dashboard(data, eia_data, ais_data, picked_date, cycle, region):
             color="warning"
         ), width=3),
         dbc.Col(kpi_card(
-            "Canada border (net)",
-            f"{k['Canada border']['today']:,.0f}",
-            _delta_str(k["Canada border"]["delta"]),
+            "Canada net imports",
+            f"{k['canada_imports'] - k['canada_exports']:+,.0f}",
+            f"{k['canada_imports']:,.0f} import / {k['canada_exports']:,.0f} export  ·  MMcf/d",
             color="success"
         ), width=3),
     ]
 
     # Raw flows table for the selected day, filtered by region tab
     day_df = df[(df["gas_day"] == gas_day) & (df["cycle"] == cycle)
-                & (df["category"] == region)].copy()
+                & _region_mask(df, region)].copy()
     day_df["mmcfd"] = day_df["mmcfd"].round(1)
     if day_df.empty:
         table = html.P(f"No {region} rows for {gas_day} / {cycle}.",
@@ -772,18 +957,17 @@ def update_dashboard(data, eia_data, ais_data, picked_date, cycle, region):
             page_size=25,
         )
 
-    # AIS table — only LNG terminals
+    # AIS section: per-terminal inference summary + the actual detected vessels
     ais_today = ais_df[ais_df["gas_day"] == gas_day] if not ais_df.empty \
         else pd.DataFrame()
+    ais_parts = []
     if ais_today.empty:
-        ais_table = html.P(
-            "No AIS data for this gas day. Run "
-            "python -m ng_feedgas ais-collect + ais-infer "
-            "(requires AISSTREAM_API_KEY).",
-            className="text-muted",
-        )
+        ais_parts.append(html.P(
+            "No AIS inference for this gas day. The hourly NG-Feedgas-AIS-Track "
+            "task populates this (requires AISSTREAM_API_KEY).",
+            className="text-muted"))
     else:
-        ais_table = dash_table.DataTable(
+        ais_parts.append(dash_table.DataTable(
             data=ais_today.assign(
                 gas_day=ais_today["gas_day"].astype(str),
                 est_feedgas_mmcfd=ais_today["est_feedgas_mmcfd"].round(0),
@@ -797,15 +981,23 @@ def update_dashboard(data, eia_data, ais_data, picked_date, cycle, region):
                  "id": "est_feedgas_mmcfd", "type": "numeric"},
             ],
             sort_action="native",
-            style_cell={"padding": "8px", "fontFamily": "system-ui",
-                        "fontSize": 13},
+            style_cell={"padding": "8px", "fontFamily": "system-ui", "fontSize": 13},
             style_header={"backgroundColor": "#F4A261", "color": "white",
                           "fontWeight": "bold"},
             style_data_conditional=[
                 {"if": {"filter_query": "{ship_at_berth} > 0"},
                  "backgroundColor": "#FFF7E6"},
             ],
-        )
+        ))
+    # Detected-vessel detail (names + sizes), independent of inference
+    vessels = build_ais_vessels_table(gas_day)
+    if vessels is not None:
+        ais_parts.append(html.H6("Vessels detected near terminals (this gas day)",
+                                 className="mt-3"))
+        ais_parts.append(vessels)
+    ais_table = html.Div(ais_parts)
+
+    changes_table = build_changes_table(gas_day, cycle)
 
     return (
         kpis,
@@ -816,6 +1008,7 @@ def update_dashboard(data, eia_data, ais_data, picked_date, cycle, region):
         fig_pipeline_breakdown(df, cycle, gas_day, region),
         table,
         ais_table,
+        changes_table,
     )
 
 

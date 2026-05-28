@@ -144,7 +144,7 @@ terminals:
 
   - name: Calcasieu Pass
     state: LA
-    nameplate_mmcfd: 1500
+    nameplate_mmcfd: 1600   # peak design (~1.6 Bcf/d; 1.3 baseload)
     feeds: []
       # Venture Global TransCameron Pipeline — shipper-private, no public EBB.
       # No interstate-pipeline interconnect currently scrapeable. Free
@@ -152,7 +152,7 @@ terminals:
 
   - name: Plaquemines
     state: LA
-    nameplate_mmcfd: 2000
+    nameplate_mmcfd: 3600   # Phase 1+2 design (~3.6 Bcf/d); VG authorized ~3.85 Bcf/d
     feeds:
       - scraper: tcenergy
         pipeline: TGP
@@ -308,6 +308,8 @@ terminals:
   # Bi-directional since 2017; periodic imports from 2018.
   # Scraped via Playwright (Imperva bot protection on iol.iroquois.com).
   # Meter IDs verified 2026-05-27.
+  # Waddington (import) and Brookfield (export) are SEPARATE terminals so a
+  # Canada->US receipt is never conflated with a US->Canada delivery in totals.
   - name: Canada - Waddington (Iroquois)
     state: NY
     nameplate_mmcfd: 1700
@@ -318,6 +320,11 @@ terminals:
         meter_id: "2250"
         location_name: "Waddington"
         direction: receipt
+
+  - name: Canada - Brookfield (Iroquois export)
+    state: NY
+    nameplate_mmcfd: 600
+    feeds:
       - scraper: iroquois
         pipeline: Iroquois
         pipeline_code: IGT

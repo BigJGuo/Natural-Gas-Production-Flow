@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterable
 
 from ..config import MeterPoint
@@ -72,6 +72,9 @@ class WilliamsScraper(BaseScraper):
     name = "williams"
 
     def fetch(self, ctx: ScrapeContext) -> list[FlowRecord]:
+        return self.with_retry(lambda: self._fetch_impl(ctx))
+
+    def _fetch_impl(self, ctx: ScrapeContext) -> list[FlowRecord]:
         if not ctx.meter_points:
             return []
 
@@ -169,7 +172,7 @@ def _match_meters(
     source_url: str,
 ) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in meters:
         match = _row_match(rows, mp)
         if not match:

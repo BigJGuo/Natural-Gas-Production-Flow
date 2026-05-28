@@ -23,6 +23,20 @@ CREATE TABLE IF NOT EXISTS ais_observations (
 
 CREATE INDEX IF NOT EXISTS idx_ais_terminal_time ON ais_observations(terminal, captured_at);
 
+-- Persistent ship registry: maps MMSI -> static data (name, type). ShipStaticData
+-- is broadcast far less often than PositionReport, so a vessel's type may only be
+-- learned in a later collection run. Persisting it here lets us backfill the type
+-- for all observations of that MMSI, regardless of which run first saw the static data.
+CREATE TABLE IF NOT EXISTS ais_ships (
+    mmsi            INTEGER PRIMARY KEY,
+    ship_name       TEXT,
+    ship_type       INTEGER,
+    length_m        REAL,               -- overall length (Dimension A+B); LNG carriers ~290-345m
+    width_m         REAL,               -- beam (Dimension C+D)
+    is_lng_carrier  INTEGER NOT NULL DEFAULT 0,  -- 1 once confirmed (observed size/type) or seeded
+    updated_at      TEXT NOT NULL
+);
+
 -- Inferred terminal activity rollups (one row per terminal per gas day from AIS)
 CREATE TABLE IF NOT EXISTS ais_daily_inference (
     gas_day         TEXT NOT NULL,

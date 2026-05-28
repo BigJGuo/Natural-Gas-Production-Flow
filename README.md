@@ -1,43 +1,52 @@
-# ng_feedgas — U.S. LNG Feedgas EBB Scraper
+# ng_feedgas — U.S. LNG Feedgas + Cross-Border Gas Flow Tracker
 
-Automates the daily workflow defined in [NG Production/LNG_Feedgas_Template.md](NG%20Production/LNG_Feedgas_Template.md):
-pulls scheduled-quantity data from pipeline EBB (Electronic Bulletin Board) portals, sums per LNG
-terminal, stores history in SQLite, and emits the filled-in Part-4 table and Part-5 analysis prompt.
+Scrapes scheduled-quantity data from public pipeline EBB (Electronic Bulletin Board)
+portals, normalizes everything to a canonical `FlowRecord`, stores history in SQLite,
+runs reasonableness validators, and renders a Plotly Dash dashboard. Covers U.S. LNG
+feedgas, U.S.→Mexico pipeline exports, and U.S.↔Canada border crossings.
 
-> **Status:** Proof of concept, functional. Five of eight terminals are scraped end-to-end
-> against the live Kinder Morgan portal. Williams Transco scraper is a stub. See
-> `docs/portal_notes.md` for the verified meter-point IDs and the remaining gaps.
+> **Status:** Operational. 9 scrapers across ~20 terminals/crossings. Pipeline data
+> updates run on Windows Task Scheduler (daily + intraday). See `MASTERPLAN.md` for
+> roadmap and `docs/portal_notes.md` for portal specifics.
 
-## Coverage
+## Data confidence — read this first
 
-6 scrapers covering 6 of 8 terminals. Sample US total: **6,911 MMcf/d for 2026-05-21 evening** (~55% of typical 12,500 MMcf/d US total).
+Not all numbers are equally trustworthy. The dashboard color-codes every terminal:
 
-| Terminal | Pipelines captured | Sample MMcf/d | Status |
-|---|---|---|---|
-| Sabine Pass | NGPL + TETCO + Trunkline-Creole | 1,474 | Partial (Creole Trail direct still missing) |
-| Corpus Christi | NGPL | 586 | Partial (Gulf South missing) |
-| Freeport LNG | Transco + TETCO | 1,256 | Good |
-| Cameron LNG | TGP + TETCO + Col Gulf | 998 | Good |
-| Cove Point | none | 0 | **Blocked** — Cove Point Pipeline is dedicated short line, off-EBB |
-| Elba Island | EEC | 131 | Good |
-| Calcasieu Pass | none | 0 | **Blocked** — Venture Global TransCameron is private |
-| Plaquemines | TGP + Col Gulf | 2,466 | Good (over Phase-1 nameplate; reflects Phase-2 ramp) |
+- **Exact (green)** — single-meter border crossings (the 7 Mexico EPNG/Sierrita points,
+  Niagara, Sumas, Waddington). One meter = the entire physical flow at that point.
+  These are faithful to the operator-posted scheduled quantities; use them as-is.
+- **Lower bound (amber)** — LNG terminals are fed by *multiple* pipes, some private
+  (e.g. Sabine's Creole Trail, Cameron's CIP, Corpus's CCPL). We sum the public
+  pipelines only, so the per-terminal total is a floor. **Trust the day-over-day
+  *change*, not the absolute level.** Captured U.S. LNG runs ~50% of the EIA monthly
+  total — the gap is private/intrastate feeders and the two unscraped terminals.
+- **Not captured (gray)** — Calcasieu Pass (private), Golden Pass (no scraper yet),
+  Chippawa/Emerson (no scraper yet).
 
-See [docs/portal_notes.md](docs/portal_notes.md) for the full coverage map, verified meter IDs, and the rationale for each gap.
+Calibrate the amber tier against the EIA monthly LNG total (loaded via `eia-fetch`).
 
 ## Scrapers
 
 | Scraper | Portal | Pipelines | Tech |
 |---|---|---|---|
-| `kmi` | pipeline2.kindermorgan.com | NGPL, EEC, TGP, SNG (via `code=` param) | requests + viewstate POST + xlsx |
-| `williams` | 1line.williams.com | Transco | requests + 4-step JSP flow |
-| `tcenergy` | (delegates to KMI with code=TGP) | TGP | — |
+| `kmi` | pipeline2.kindermorgan.com | NGPL, KMLP, EEC, SGP (Sierrita), EPNG, TGP | requests + viewstate POST + xlsx |
+| `tcenergy` | (delegates to KMI, code=TGP) | TGP (Cameron, Plaquemines) | — |
+| `williams` | 1line.williams.com | Transco (Freeport, Cove Point) | requests + 4-step JSP flow |
+| `williams_nwp` | northwest.williams.com | Northwest Pipeline (Sumas) | requests + HTML grid |
 | `enbridge` | rtba.enbridge.com | TETCO | requests + viewstate POST + CSV |
-| `et_tgc` | tgcmessenger.energytransfer.com | Trunkline | requests + direct CSV URL |
-| `tceconnects` | ebb.tceconnects.com | TCO, Columbia Gulf, ANR | **Playwright** (SSRS, JS-only) |
+| `et_ipost` | *.energytransfer.com | TGC, TW, FEP, PEPL, FGT | requests + direct CSV |
+| `tceconnects` | ebb.tceconnects.com | Columbia Gulf, TCO, ANR | **Playwright** (SSRS, JS-only) |
+| `iroquois` | iol.iroquois.com | Iroquois (Waddington, Brookfield) | **Playwright** (ExtJS + Imperva) |
 
-> The `tceconnects` scraper requires Playwright + a Chromium install:
-> `pip install playwright && python -m playwright install chromium`
+`--pipeline fast` runs the 7 HTTP scrapers; `--pipeline slow` runs the 2 Playwright ones.
+
+> Playwright scrapers need: `pip install playwright && python -m playwright install chromium`
+
+### `--date` support
+`kmi`/`tcenergy`, `williams`, `enbridge` honor `--date`. `et_ipost`, `williams_nwp`,
+`tceconnects`, `iroquois` only return the most-recent posted snapshot (their portals
+expose no date selector), so historical backfill is not possible for those.
 
 ## Install
 
@@ -45,156 +54,101 @@ See [docs/portal_notes.md](docs/portal_notes.md) for the full coverage map, veri
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+python -m playwright install chromium    # for tceconnects + iroquois
 ```
-
-## Calibration sources (EIA + AIS) — optional
-
-Two external sources fill gaps the pipeline EBBs miss. Both are free but require one-time API key setup.
-
-### EIA weekly LNG export totals (calibration baseline)
-
-1. Register for a free API key at https://www.eia.gov/opendata/register.php (instant).
-2. Set the env var: `setx EIA_API_KEY "your-key"` (open a new PowerShell after).
-3. Fetch:
-   ```powershell
-   $env:PYTHONPATH = "src"
-   python -m ng_feedgas eia-fetch --weeks 52
-   ```
-4. The dashboard now overlays EIA's weekly LNG export total (red dashed line) on the U.S. Total chart — compare against your scraped total to see how big your scraping gap is each week.
-
-### AIS vessel tracking (Cove Point + Calcasieu Pass proxy)
-
-1. Register for a free API key at https://aisstream.io (instant).
-2. Set the env var: `setx AISSTREAM_API_KEY "your-key"` (open a new PowerShell after).
-3. Collect vessel observations (run this on a schedule — every hour works well):
-   ```powershell
-   python -m ng_feedgas ais-collect --duration 300   # listen 5 min
-   ```
-   Each run opens a WebSocket to aisstream.io, listens for AIS broadcasts in the bounding boxes around each LNG terminal, and writes observations to the SQLite DB.
-4. Roll up daily:
-   ```powershell
-   python -m ng_feedgas ais-infer --date today
-   ```
-   The inference rule is crude: if any LNG carrier was moored (slow or status=5) at a terminal's berth on that day, estimate feedgas at 60% of nameplate; otherwise 0.
-5. Dashboard now shows an "AIS-inferred" bar on the Terminal Snapshot chart (orange, alongside scraped blue), plus an "AIS Vessel Tracking" table at the bottom listing ships-at-berth per terminal for the selected day.
-
-This is **directional** data — useful to detect Cove Point or Calcasieu Pass activity (or lack thereof), not for precise volume. Cross-check against the EIA weekly total to calibrate the 60% loading-rate assumption.
-
-## How it works
-
-Each scraper drives one portal's "download the daily snapshot" flow:
-
-- **KMI portal**: GET form → harvest viewstate → POST btnDownload → read .xlsx (`pandas.read_excel(header=3)`)
-- **Williams 1Line**: bootstrap → GET form → POST date+cycle+locationIDs → GET OACreport.jsp → regex-parse HTML rows
-- **Enbridge RTBA**: GET form → harvest viewstate + pick latest LATEC/INTRDYC option → POST `__doPostBack` for download link → read CSV
-- **Energy Transfer TGC**: GET landing → GET `?f=csv&extension=csv` → read CSV
-
-All scrapers extract the same canonical `FlowRecord` (gas_day, cycle, terminal, pipeline, meter_point, mmcfd, direction, source_url) and upsert into SQLite. The same downstream code (CSV export, Part-5 prompt, validators) works for all of them.
 
 ## Usage
 
 ```powershell
-# Pull yesterday's evening cycle from all scrapers (KMI + TGP-via-KMI run; Williams skips)
 $env:PYTHONPATH = "src"
-python -m ng_feedgas pull --date yesterday --cycle evening --pipeline all
-
-# Pull only one scraper
-python -m ng_feedgas pull --date today --cycle evening --pipeline kmi
-
-# Print the Part-4 entry table to stdout
-python -m ng_feedgas show --date yesterday --cycle evening
-
-# Write the Part-4 CSV and Part-5 analysis prompt under data/exports/
-python -m ng_feedgas report --date yesterday --cycle evening
+python -m ng_feedgas pull   --date today --cycle auto --pipeline all   # scrape
+python -m ng_feedgas show   --date today --cycle evening               # Part-4 table
+python -m ng_feedgas report --date today --cycle evening               # CSV + Part-5 prompt
+python -m ng_feedgas changes --date today --cycle auto --only-alerts   # DoD/WoW/MoM deviations
 ```
 
-Use the **evening** cycle for forecasting (posted ~9 PM CPT, refined view of next gas day).
-Use **confirmed** (which maps to KMI's "BEST AVAILABLE") for historical backfills.
+`--cycle auto` picks the latest-posted cycle by U.S./Central clock. The Part-5 prompt
+covers **U.S. LNG only** — Mexico/Canada are reported separately and never folded into
+the LNG total (so the per-terminal lines always sum to the printed total).
 
-The Part-5 prompt is a plain text file ready to paste into Claude.
-"Known outages / maintenance today" is left as `[FILL IN MANUALLY OR "NONE KNOWN"]` —
-the scraper has no automated source for that.
+## Dashboard
 
-## Outputs
-
-```
-data/
-  feedgas.db                          SQLite history. One row per gas-day/cycle/meter point.
-  exports/
-    2026-05-22_evening.csv            Part-4 entry table as CSV.
-    2026-05-22_evening_prompt.txt     Part-5 analysis prompt, ready to paste into Claude.
+```powershell
+python dashboard.py        # http://localhost:8050
 ```
 
-## Validators (Part 6)
+Region tabs (All / U.S. LNG / Mexico / Canada), per-terminal bars with confidence
+outlines, % of nameplate, deviation alerts (day/week/month), EIA overlay, and an AIS
+vessel-detection table. Hit **↻ Reload Data** after a pull. Terminal nameplates are
+read live from `meter_points.yaml` — edit there, no code change.
 
-After each `pull`, the CLI runs the Part-6 reasonableness checks and prints warnings to stderr:
+## Calibration sources (optional, free)
 
-- Any terminal whose total exceeds 110% of nameplate (likely double-count or wrong direction).
-- Any active terminal below 20% of nameplate (possible outage or scraper miss).
-- U.S. total outside 8,000–13,000 MMcf/d (likely missing a scraper).
+**EIA monthly LNG exports** — `eia-fetch --weeks 52` (needs `EIA_API_KEY`, register at
+eia.gov/opendata). Loads the authoritative monthly U.S. LNG total to calibrate the
+amber LNG terminals.
 
-Warnings don't block writes; they print to stderr so cron logs surface them.
+**AIS vessel tracking** — `ais-collect --duration 300` then `ais-infer --date today`
+(needs `AISSTREAM_API_KEY`, register at aisstream.io). Detects whether an LNG carrier is
+moored at a terminal. A carrier = a moored vessel with a large, beamy hull (length ≥250m
+**and** beam ≥38m, or a gas-tanker type) — size is the reliable discriminator since AIS
+type codes are sparse and 80-89 covers all tankers. The "60% of nameplate when a carrier
+is at berth" estimate is a coarse *is-it-loading* proxy, not a measurement.
+
+## Automation (Windows Task Scheduler)
+
+| Task | What | Cadence |
+|---|---|---|
+| `NG-Feedgas-Daily-Pull` | all scrapers, yesterday/evening | daily 7:00 AM |
+| `NG-Feedgas-Intraday-Fast` | 7 HTTP scrapers, today/auto | every 5 min |
+| `NG-Feedgas-Intraday-Slow` | 2 Playwright scrapers, today/auto | every 15 min |
+| `NG-Feedgas-AIS-Track` | AIS collect + infer | hourly |
+
+Register the intraday tasks with `tools/register_intraday_tasks.ps1`. All run only while
+logged on (no stored password). SQLite uses WAL + busy_timeout so concurrent task writes
+don't collide.
+
+## Tests
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m pytest tests/ -q
+```
+
+Covers number parsing, cycle maps, upsert idempotency, `categorize`, and the TETCO
+gas-day-selection regression guard.
 
 ## Architecture
 
 ```
 src/ng_feedgas/
-  cli.py                  click CLI: pull / report / show
-  models.py               FlowRecord dataclass + Cycle/Direction literals
-  validators.py           Part-6 reasonableness checks
-  config/
-    __init__.py           Config loader
-    meter_points.yaml     Terminal -> pipeline -> meter map
-  scrapers/
-    base.py               BaseScraper, ScrapeContext
-    kmi.py                Functional: KMI OpAvailPoint by code/day/cycle
-    williams.py           Skeleton
-    tcenergy.py           Skeleton
-  storage/
-    schema.sql            CREATE TABLE flows
-    db.py                 connect, upsert_flows, terminal_totals, us_totals_range
-    export.py             Part-4 CSV + plaintext renderers
-  analysis/
-    stats.py              DailyStats: DoD, 7d, 30d
-    prompt.py             Part-5 prompt filler
-docs/
-  portal_notes.md         Phase 0 findings + action items
-data/
-  feedgas.db              SQLite (created on first run)
-  exports/                Daily CSVs and prompt files
+  cli.py            click CLI: pull / show / report / changes / eia-fetch / ais-*
+  models.py         FlowRecord (tz-aware), Cycle/Direction literals
+  validators.py     Part-6 reasonableness checks
+  config/           load_config, categorize(), meter_points.yaml (terminal->meter map)
+  scrapers/         base (with_retry) + 9 portal scrapers
+  storage/          schema.sql, db (WAL, upsert, terminal_totals[_directional], terminal_series), export
+  analysis/         stats (LNG-only), prompt (Part-5), changes (DoD/WoW/MoM)
+  calibration/      eia (monthly LNG), ais (vessel tracking)
+dashboard.py        Plotly Dash app
+tools/              PowerShell task wrappers + discovery/probe scripts
+tests/              pytest suite
 ```
 
 ## Known limitations
 
-1. **Missing pipelines.** No coverage for Williams Transco (Freeport + Cove Point), Creole
-   Trail (the second Sabine Pass feed), Gulf South (Corpus Christi secondary), TETCO,
-   Trunkline, ANR, SNG, CIP, Columbia Gulf, Columbia Gas. POC totals will run ~4,000 MMcf/d
-   short of the true US total of ~12,000 MMcf/d.
-2. **Calcasieu Pass.** Not yet matched to any TGP meter in the downloaded grid. Likely
-   under a Venture Global TransCameron name we haven't identified.
-3. **Plaquemines > nameplate.** Plaquemines often runs above its 1,400 MMcf/d nominal
-   nameplate after Phase 2 commissioning. The validator flags this; bump the YAML value
-   when comfortable.
-4. **Unit conversion.** KMI publishes in Dth/d (1 Dth = 1 MMBtu). Industry convention treats
-   Dth/d ≈ Mcf/d for feedgas (heat content ~1 Btu/scf), so we divide by 1000 to get MMcf/d.
-   For tighter accuracy, override per-pipeline using each EBB's "Meas Basis Desc" column.
-5. **Rate limiting.** Default 2.5 s delay between requests (`--delay`). KMI portal was
-   stable during dev testing.
-6. **HTML / portal drift.** If KMI changes the page layout or the Excel download format,
-   the scraper raises `ParseError` loudly rather than emitting zeros silently.
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `KMI: no row matched terminal=...` | Loc ID in YAML doesn't appear in downloaded Excel for that cycle | Re-download manually and check the `Loc` column for the right meter; update `meter_points.yaml` |
-| `KMI: btnDownload not found on form page` | KMI re-skinned the form | Re-inspect the form page and find the new button name |
-| `KMI: missing required columns in xlsx` | KMI changed the Excel column layout | Re-inspect a downloaded `.xlsx` and update `REQUIRED_COLUMNS` / `EXCEL_HEADER_ROW` in `kmi.py` |
-| `KMI: unexpected Content-Type` | Download POST returned an error page instead of Excel | The viewstate may have changed; check the form HTML for the new button name |
-| Validation warns "U.S. total outside range" | Williams scraper not running yet | Expected for POC; add 6,000+ MMcf/d once Williams + Creole Trail go live |
-| HTTP 403 / 429 | Rate limit | `--delay 10` or run less often |
+1. **~50% LNG coverage.** Calcasieu Pass + Golden Pass have no scraper; Cheniere CCPL,
+   Cameron CIP, and private Sabine/Plaquemines feeders are off-EBB. Amber LNG totals are
+   lower bounds — calibrate against EIA.
+2. **Texas-intrastate Mexico crossings** (Trans-Pecos, Comanche Trail, NET Mexico, Valley
+   Crossing) have no public daily OAC. CENAGAS monthly PDFs are the only free source
+   (parser skeleton in `tools/cenagas_pdf_backfill.py`, ~30-day lag).
+3. **Unit convention.** Portals publish Dth/d (≈ MMBtu/d); we treat Dth/d ≈ Mcf/d and
+   divide by 1000 for MMcf/d.
+4. **Scheduled quantities, not metered actuals.** EBBs post nominations, very close to
+   physical flow on confirmed cycles but not custody-meter readings.
 
 ## License & scope
 
 Research / internal use. Not affiliated with any pipeline operator. All data is public
-FERC informational posting data; respect each portal's terms of use.
+FERC informational-posting data; respect each portal's terms of use.

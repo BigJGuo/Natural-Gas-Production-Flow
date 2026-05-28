@@ -34,7 +34,7 @@ import io
 import logging
 import re
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -155,7 +155,7 @@ def _match_meters(
     source_url: str,
 ) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in meters:
         match = _row_match(df, mp)
         if match is None:
@@ -188,21 +188,27 @@ def _match_meters(
 
 
 def _row_match(df: pd.DataFrame, mp: MeterPoint):
+    def _highest_tsq(hits: pd.DataFrame):
+        tsq = pd.to_numeric(
+            hits["TotalScheduledQuantity"].astype(str).str.replace(",", ""),
+            errors="coerce",
+        ).fillna(0)
+        return hits.iloc[tsq.values.argmax()]
+
     if mp.meter_id:
         hits = df[df["Location"] == str(mp.meter_id).strip()]
         if not hits.empty:
-            # Prefer the row matching expected direction
-            for _, r in hits.iterrows():
-                f = str(r.get("FlowInd", "")).strip().upper()
-                if f == mp.direction[0].upper() or (f == "BD" and mp.direction == "delivery"):
-                    return r
-            return hits.iloc[0]
+            # Prefer rows in the expected direction (or BD); among those, the
+            # highest-TSQ row. A Loc can appear multiple times (e.g. a 0-TSQ
+            # stale row plus the active one) — never just take the first.
+            want = mp.direction[0].upper()
+            dir_hits = hits[hits["FlowInd"].astype(str).str.strip().str.upper().isin(
+                {want, "BD"} if mp.direction == "delivery" else {want})]
+            return _highest_tsq(dir_hits if not dir_hits.empty else hits)
     needle = mp.location_name.lower()
     hits = df[df["LocationName"].astype(str).str.lower().str.contains(needle, regex=False, na=False)]
     if not hits.empty:
-        # Pick highest TSQ row (active delivery)
-        tsq_num = pd.to_numeric(hits["TotalScheduledQuantity"].astype(str).str.replace(",",""), errors="coerce").fillna(0)
-        return hits.iloc[tsq_num.values.argmax()]
+        return _highest_tsq(hits)
     return None
 
 

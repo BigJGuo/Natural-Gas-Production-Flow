@@ -23,6 +23,29 @@ class MeterPoint:
     direction: str
 
 
+def categorize(terminal: str) -> str:
+    """Classify a terminal by its name prefix.
+
+    Single source of truth shared by the CLI export, stats, and the dashboard
+    so the per-terminal lines and totals can never disagree about what counts as
+    'U.S. LNG' vs a cross-border point.
+    """
+    if terminal.startswith("Mexico"):
+        return "Mexico exports"
+    if terminal.startswith("Canada"):
+        return "Canada border"
+    return "U.S. LNG"
+
+
+# Canada border terminals whose useful flow is a RECEIPT (import) rather than a
+# delivery. Used by direction-aware totals so imports aren't dropped/mislabelled.
+CANADA_IMPORT_TERMINALS = {
+    "Canada - Sumas (Northwest)",
+    "Canada - Waddington (Iroquois)",
+    "Canada - Emerson (Viking/GreatLakes/NorthernBorder)",
+}
+
+
 @dataclass(frozen=True)
 class Config:
     meter_points: list[MeterPoint]
@@ -38,6 +61,14 @@ class Config:
             m for m in self.meter_points
             if m.scraper == scraper_name and m.pipeline_code == pipeline_code
         ]
+
+    def terminals_in_order(self) -> list[str]:
+        """Configured terminal names in YAML order (deduped)."""
+        return list(self.terminal_nameplate.keys())
+
+    def lng_terminals(self) -> list[str]:
+        """LNG-export terminal names in YAML order."""
+        return [t for t in self.terminals_in_order() if categorize(t) == "U.S. LNG"]
 
 
 def load_config(path: Path | None = None) -> Config:

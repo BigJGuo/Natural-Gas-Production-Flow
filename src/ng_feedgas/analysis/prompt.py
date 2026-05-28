@@ -13,9 +13,13 @@ data pulled from pipeline EBBs. Please analyze this data accurately.
 Gas Day: {gas_day}
 Nomination Cycle: {cycle}
 
+Scope: U.S. LNG feedgas only. The total below is the sum of the LNG terminals
+listed (cross-border Mexico exports and Canada flows are tracked separately and
+are NOT included here).
+
 FEEDGAS DATA (MMcf/d):
 {terminal_lines}
-TOTAL U.S.:        {us_total} MMcf/d
+TOTAL U.S. LNG:    {us_total} MMcf/d
 
 Prior gas day total: {prior_day} MMcf/d
 7-day average:       {seven_day} MMcf/d

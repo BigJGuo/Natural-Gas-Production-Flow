@@ -26,7 +26,7 @@ import logging
 import os
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -119,7 +119,7 @@ def upsert_to_db(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
     """Persist EIA weekly rows to the eia_weekly table."""
     if df.empty:
         return 0
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     rows = [
         (row["period"].isoformat(), float(row["us_lng_bcfd"]),
          row.get("source_url", ""), now)

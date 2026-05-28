@@ -31,7 +31,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -53,6 +53,9 @@ class EnergyTransferIPostScraper(BaseScraper):
     name = "et_ipost"
 
     def fetch(self, ctx: ScrapeContext) -> list[FlowRecord]:
+        return self.with_retry(lambda: self._fetch_impl(ctx))
+
+    def _fetch_impl(self, ctx: ScrapeContext) -> list[FlowRecord]:
         if not ctx.meter_points:
             return []
 
@@ -106,7 +109,7 @@ def _match_meters(
     source_url: str,
 ) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in meters:
         match = _row_match(df, mp)
         if match is None:

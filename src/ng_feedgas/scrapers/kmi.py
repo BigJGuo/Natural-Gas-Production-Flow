@@ -32,12 +32,10 @@ from __future__ import annotations
 import io
 import logging
 import re
-import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
-import requests
 from bs4 import BeautifulSoup
 
 from ..config import MeterPoint
@@ -92,39 +90,15 @@ class KMIScraper(BaseScraper):
             self._sleep(ctx)
         return records
 
-    def _download_with_retry(
-        self, ctx: ScrapeContext, code: str,
-        attempts: int = 4, base_backoff_s: float = 3.0,
-    ) -> tuple[bytes, str]:
-        """Download with retry + exponential backoff.
+    def _download_with_retry(self, ctx: ScrapeContext, code: str) -> tuple[bytes, str]:
+        """Download with retry + backoff (uses BaseScraper.with_retry).
 
         The KM portal intermittently drops connections (RemoteDisconnected) or
-        rate-limits, especially after repeated hits from one IP. Each retry uses
-        a FRESH session so any flagged/sticky cookies are cleared.
+        rate-limits, especially after repeated hits from one IP. with_retry resets
+        the session between attempts so flagged/sticky cookies are cleared.
         """
-        last_exc: Exception | None = None
-        for attempt in range(1, attempts + 1):
-            try:
-                return self._download_xlsx(ctx, code)
-            except Exception as exc:   # noqa: BLE001 — retry on any network/parse hiccup
-                last_exc = exc
-                if attempt < attempts:
-                    backoff = base_backoff_s * (2 ** (attempt - 1))
-                    log.warning(
-                        "KMI %s: attempt %d/%d failed (%s); retrying in %.0fs",
-                        code, attempt, attempts, exc, backoff,
-                    )
-                    time.sleep(backoff)
-                    self._reset_session()
-        assert last_exc is not None
-        raise last_exc
-
-    def _reset_session(self) -> None:
-        """Drop the current session and start a clean one (clears cookies)."""
-        ua = self.session.headers.get("User-Agent", "ng-feedgas/0.1 (+research)")
-        self.session.close()
-        self.session = requests.Session()
-        self.session.headers.update({"User-Agent": ua})
+        return self.with_retry(lambda: self._download_xlsx(ctx, code),
+                               label=f"KMI {code}")
 
     def _download_xlsx(self, ctx: ScrapeContext, code: str) -> tuple[bytes, str]:
         params = {
@@ -188,7 +162,7 @@ def _match_meters(
     code: str,
 ) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in meters:
         match = _row_match(df, mp)
         if match is None or match.empty:

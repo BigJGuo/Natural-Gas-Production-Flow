@@ -1,0 +1,34 @@
+You are a natural gas market analyst. I am providing you with today's U.S. LNG feedgas
+data pulled from pipeline EBBs. Please analyze this data accurately.
+
+Gas Day: 2026-05-28
+Nomination Cycle: EVENING
+
+Scope: U.S. LNG feedgas only. The total below is the sum of the LNG terminals
+listed (cross-border Mexico exports and Canada flows are tracked separately and
+are NOT included here).
+
+FEEDGAS DATA (MMcf/d):
+Sabine Pass:       2,567 MMcf/d
+Corpus Christi:    623 MMcf/d
+Freeport LNG:      1,283 MMcf/d
+Cameron LNG:       997 MMcf/d
+Cove Point:        676 MMcf/d
+Elba Island:       120 MMcf/d
+Calcasieu Pass:    0 MMcf/d
+Plaquemines:       2,491 MMcf/d
+Golden Pass:       0 MMcf/d
+TOTAL U.S. LNG:    8,759 MMcf/d
+
+Prior gas day total: 8,814 MMcf/d
+7-day average:       8,778 MMcf/d
+30-day average:      8,311 MMcf/d
+
+Known outages / maintenance today: [FILL IN MANUALLY OR "NONE KNOWN"]
+
+Please provide:
+1. Day-over-day change and which terminals drove it
+2. Any terminal running notably below its nameplate capacity (flag if >20% below)
+3. Week-over-week trend summary
+4. Any anomalies or data points worth flagging
+5. A one-line total feedgas summary suitable for a morning report

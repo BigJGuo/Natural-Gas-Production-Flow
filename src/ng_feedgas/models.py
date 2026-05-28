@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Literal
 
 Cycle = Literal["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed"]
@@ -20,7 +20,7 @@ class FlowRecord:
     mmcfd: float
     direction: Direction
     source_url: str
-    scraped_at: datetime = field(default_factory=datetime.utcnow)
+    scraped_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ScraperError(Exception):

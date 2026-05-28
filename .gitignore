@@ -19,6 +19,15 @@ ENV/
 # Runtime logs
 data/logs/*.log
 
+# SQLite transient files
+*.db-shm
+*.db-wal
+*.db-journal
+
+# Temp / lock files
+*.tmp
+.~lock.*#
+
 # OS / editor
 .DS_Store
 Thumbs.db

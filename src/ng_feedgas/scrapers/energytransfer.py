@@ -20,7 +20,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -71,7 +71,7 @@ class EnergyTransferTGCScraper(BaseScraper):
 
 def _match_meters(df: pd.DataFrame, ctx: ScrapeContext, source_url: str) -> list[FlowRecord]:
     out: list[FlowRecord] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for mp in ctx.meter_points:
         match = _row_match(df, mp)
         if match is None:

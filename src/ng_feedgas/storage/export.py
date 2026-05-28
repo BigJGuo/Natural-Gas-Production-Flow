@@ -7,19 +7,13 @@ from datetime import date
 from io import StringIO
 from pathlib import Path
 
+from ..config import load_config
 from .db import flows_for_day, terminal_totals
 
-# Terminal ordering matches Part 4 of the template.
-TERMINAL_ORDER = [
-    "Sabine Pass",
-    "Corpus Christi",
-    "Freeport LNG",
-    "Cameron LNG",
-    "Cove Point",
-    "Elba Island",
-    "Calcasieu Pass",
-    "Plaquemines",
-]
+# LNG terminal ordering, derived from the YAML config (single source of truth)
+# so it can't drift out of sync with meter_points.yaml. Part-4/Part-5 cover U.S.
+# LNG feedgas; Mexico/Canada cross-border points are reported separately.
+TERMINAL_ORDER = load_config().lng_terminals()
 
 
 def write_part4_csv(
