@@ -112,6 +112,15 @@ terminals:
         meter_id: "4246"
         location_name: "Cameron LNG"
         direction: delivery
+      # Cameron Interstate Pipeline (CIP) — Sempra's dedicated feeder to the
+      # Cameron LNG plant. Public EBB on gasnom.com/ip/cameron (verified
+      # 2026-05-29: Loc 772300 "Cameron LNG (Del)" ~1.12 Bcf/d delivery).
+      - scraper: gasnom
+        pipeline: Cameron Interstate
+        pipeline_code: CIP
+        meter_id: "772300"
+        location_name: "Cameron LNG (Del)"
+        direction: delivery
 
   - name: Cove Point
     state: MD
@@ -170,13 +179,18 @@ terminals:
   - name: Golden Pass
     state: TX
     nameplate_mmcfd: 2500
-    feeds: []
-      # Golden Pass Pipeline LLC (Kinder Morgan / Exxon JV) operates 70-mile
-      # pipeline to GP LNG. Postings hosted on gasnom.com/ip/goldenpass/
-      # (NOT on pipeline2.kindermorgan.com). EBB structure uses ColdFusion
-      # frames and is browser-only. NEEDS: dedicated scraper (gasnom.py) using
-      # Playwright OR direct fetch of body.cfm with session cookies. Train 1
-      # first cargo shipped Jan 2025; ramping to ~2.5 Bcf/d feedgas.
+    feeds:
+      # Golden Pass Pipeline LLC (Kinder Morgan / Exxon JV) is the sole 70-mile
+      # dedicated feeder to GP LNG, so its single "Terminal" delivery meter
+      # captures the whole plant feedgas. Postings on gasnom.com/ip/goldenpass
+      # (ColdFusion HTML; plain HTTP works — verified 2026-05-29). Loc 1097217
+      # "Terminal" delivery ~0.42 Bcf/d (Train 1 ramp; first cargo Jan 2025).
+      - scraper: gasnom
+        pipeline: Golden Pass
+        pipeline_code: GPPL
+        meter_id: "1097217"
+        location_name: "Terminal"
+        direction: delivery
 
   # =========================================================================
   # Mexico export points (gas crossing US → Mexico)
@@ -267,15 +281,39 @@ terminals:
         location_name: "KMTP/EPNG (IMNDZTRL) MENDOZA TRAIL"
         direction: delivery
 
-  # Mexico exports not yet covered (need future work):
-  #   - NET Mexico Pipeline (Agua Dulce → Brownsville)        — TX intrastate, no public OAC
-  #   - Trans-Pecos Pipeline (Waha → Presidio)                — TX intrastate, no public OAC
-  #   - Comanche Trail Pipeline (Waha → San Elizario)         — TX intrastate, no public OAC
-  #   - Valley Crossing (Agua Dulce → Brownsville → Sur de TX) — TX intrastate, no public OAC
-  #   - Roadrunner Gas Transmission (Waha → San Elizario)     — interstate; ONEOK 50% owned;
-  #                                                              EBB at oneok.com requires new scraper
-  # For these intrastates: CENAGAS daily import-by-point reports
-  # (https://www.cenagas.gob.mx) are the authoritative free daily source.
+  # ---- Texas-intrastate Mexico crossings (NO public daily US OAC) ----
+  # These pipes are regulated by the Texas Railroad Commission, not FERC, so
+  # there is NO daily Operationally-Available-Capacity / scheduled-quantity EBB
+  # for them. They are listed as configured terminals with NO daily `feeds`.
+  #
+  # CENAGAS crosswalk (verified 2026-05-29 against /GestionComercial/Nodos):
+  #   Mexico - NET Mexico      = CENAGAS node V061 RAMONES   (Net Mexico Pipeline, Camargo)
+  #   Mexico - Valley Crossing = CENAGAS node V074 MONTEGRANDE (Sur de Texas-Tuxpan marine)
+  # HOWEVER: the free CENAGAS monthly "Volumen" PDF is EXTRACTION-only (domestic E/N
+  # nodes); it does NOT contain these import (V) node volumes. So there is currently
+  # NO free downloadable source of their daily/monthly flows. Trans-Pecos and
+  # Comanche Trail (West-TX/Chihuahua border) likewise have no free volume source.
+  # See tools/cenagas_pdf_backfill.py (--catalog) for the import-node crosswalk.
+  - name: Mexico - NET Mexico
+    state: TX
+    nameplate_mmcfd: 2600   # NET Mexico Pipeline (Agua Dulce -> Brownsville/Sur de TX)
+    feeds: []
+  - name: Mexico - Valley Crossing
+    state: TX
+    nameplate_mmcfd: 2600   # Valley Crossing (Agua Dulce -> Brownsville -> Sur de TX-Tuxpan)
+    feeds: []
+  - name: Mexico - Comanche Trail
+    state: TX
+    nameplate_mmcfd: 1100   # Comanche Trail (Waha -> San Elizario)
+    feeds: []
+  - name: Mexico - Trans-Pecos
+    state: TX
+    nameplate_mmcfd: 1400   # Trans-Pecos (Waha -> Presidio)
+    feeds: []
+
+  # Roadrunner Gas Transmission (Waha -> San Elizario) IS interstate (FERC;
+  # ONEOK 50%) so it posts a public OAC EBB and is daily-scrapeable — TODO: a
+  # dedicated scraper once its EBB host/endpoint is confirmed (see portal_notes).
 
   # =========================================================================
   # Canada border crossings
@@ -332,14 +370,22 @@ terminals:
         location_name: "Brookfield"
         direction: delivery
 
-  # Empire Pipeline (National Fuel Gas) — Chippawa NY to Empire State Pipeline
-  # Bi-directional with TC Energy Canadian Mainline at Chippawa border.
+  # Empire Pipeline (National Fuel Gas) — interconnects with TC Energy's Canadian
+  # Mainline at the Niagara/Chippawa border. Empire's OAC names this point
+  # "TCPL - Niagara*" (Loc 421079). Bi-directional; currently flows US->Canada
+  # (delivery ~315 MMcf/d; receipt 0 as of 2026-05-29). This is Empire's own pipe
+  # at Niagara, separate from the TGP Niagara delivery captured elsewhere. Scraped
+  # from National Fuel's public PeopleSoft OAC via Playwright.
   - name: Canada - Chippawa (Empire)
     state: NY
     nameplate_mmcfd: 850
-    feeds: []
-      # NEEDS scraper: empire (empirepipeline.com). National Fuel Gas operates.
-      # EBB at empireebb.nfgsc.com — typically ASP.NET WebForms.
+    feeds:
+      - scraper: empire
+        pipeline: Empire
+        pipeline_code: EMPIRE
+        meter_id: "421079"
+        location_name: "TCPL - Niagara"
+        direction: delivery
 
   # Northwest Pipeline (Williams) — Sumas WA border crossing.
   # Imports from BC into PNW. Loc 297 "SUMAS RECEIPT" — confirmed 1,053,645 Dth/d
@@ -357,15 +403,59 @@ terminals:
       # Kingsgate Receipt (Loc TBD via first run) — secondary BC import point
       # in eastern WA/ID. Currently smaller volumes than Sumas.
 
-  # Emerson MN — Viking Pipeline (TC Energy) + Great Lakes Gas Transmission
-  # + Northern Border Pipeline (ONEOK). Major WCSB-to-Midwest receipt point.
-  - name: Canada - Emerson (Viking/GreatLakes/NorthernBorder)
+  # Emerson MN — Great Lakes Gas Transmission + Viking Gas Transmission both
+  # connect Canadian (TransCanada Mainline) supply at the Emerson, MB/MN border.
+  # Great Lakes is on tcplus.com (scraped); Viking moved to DT Midstream's Trellis
+  # platform Nov-2025 (dtmidstream.trellisenergy.com) — separate scraper TODO.
+  - name: Canada - Emerson (GreatLakes/Viking)
     state: MN
-    nameplate_mmcfd: 4000   # Combined nameplate of all three pipelines
+    nameplate_mmcfd: 4000   # Combined Great Lakes + Viking nameplate at Emerson
     feeds:
-      # Northern Border Pipeline is on TC eConnects (asset code TBD).
-      # Viking + Great Lakes need TC Energy InfoPost scraper (separate from KMI).
-      # Currently empty — feeds added as scrapers are built.
+      # Great Lakes "EMERSON RECEIPT" (Loc 33975) — Canada->US import ~1.45 Bcf/d.
+      # Verified 2026-05-29 evening on tcplus.com/Great Lakes OAC.
+      - scraper: tcplus
+        pipeline: Great Lakes
+        pipeline_code: GLGT
+        meter_id: "33975"
+        location_name: "EMERSON RECEIPT"
+        direction: receipt
+      # Viking GT "Emerson" (Loc 33973) — Canada->US receipt ~0.4 Bcf/d.
+      # DT Midstream Trellis public infopost. Verified 2026-05-29 evening.
+      - scraper: trellis
+        pipeline: Viking
+        pipeline_code: VGT
+        meter_id: "33973"
+        location_name: "Emerson"
+        direction: receipt
+
+  # Kingsgate, ID — Gas Transmission Northwest (GTN, TC Energy) receives WCSB gas
+  # from the Foothills B.C. system. Single largest US Canada-import point.
+  - name: Canada - Kingsgate (GTN)
+    state: ID
+    nameplate_mmcfd: 2900   # GTN design capacity (~2.9 Bcf/d)
+    feeds:
+      # "KINGSGATE" (Loc 3498) — receipt ~2.0 Bcf/d. Verified 2026-05-29 evening.
+      - scraper: tcplus
+        pipeline: GTN
+        pipeline_code: GTN
+        meter_id: "3498"
+        location_name: "KINGSGATE"
+        direction: receipt
+
+  # St. Clair, MI — Great Lakes Gas Transmission crosses the St. Clair River to
+  # the Union Gas/Enbridge (Dawn) system near Sarnia, Ontario. Bidirectional; the
+  # dominant flow is a US->Canada delivery. We capture the delivery meter.
+  - name: Canada - St. Clair (Great Lakes export)
+    state: MI
+    nameplate_mmcfd: 1200
+    feeds:
+      # "ST CLAIR DELIVERY" (Loc 11772) — US->Canada delivery ~0.6 Bcf/d.
+      - scraper: tcplus
+        pipeline: Great Lakes
+        pipeline_code: GLGT
+        meter_id: "11772"
+        location_name: "ST CLAIR DELIVERY"
+        direction: delivery
 
 # Part-6 US-total reasonableness bounds.
 # Bumped to accommodate Mexico + Canada flows. LNG-only band was 8-13 Bcf/d.

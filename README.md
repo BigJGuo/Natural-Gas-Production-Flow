@@ -5,7 +5,7 @@ portals, normalizes everything to a canonical `FlowRecord`, stores history in SQ
 runs reasonableness validators, and renders a Plotly Dash dashboard. Covers U.S. LNG
 feedgas, U.S.→Mexico pipeline exports, and U.S.↔Canada border crossings.
 
-> **Status:** Operational. 9 scrapers across ~20 terminals/crossings. Pipeline data
+> **Status:** Operational. 12 scrapers across ~28 terminals/crossings. Pipeline data
 > updates run on Windows Task Scheduler (daily + intraday). See `MASTERPLAN.md` for
 > roadmap and `docs/portal_notes.md` for portal specifics.
 
@@ -38,15 +38,19 @@ Calibrate the amber tier against the EIA monthly LNG total (loaded via `eia-fetc
 | `et_ipost` | *.energytransfer.com | TGC, TW, FEP, PEPL, FGT | requests + direct CSV |
 | `tceconnects` | ebb.tceconnects.com | Columbia Gulf, TCO, ANR | **Playwright** (SSRS, JS-only) |
 | `iroquois` | iol.iroquois.com | Iroquois (Waddington, Brookfield) | **Playwright** (ExtJS + Imperva) |
+| `tcplus` | tcplus.com | GTN (Kingsgate), Great Lakes (Emerson, St. Clair), North Baja, Tuscarora | requests + Ganesha CSV POST |
+| `trellis` | dtmidstream.trellisenergy.com | Viking (Emerson) | requests + public infopost JSON |
+| `empire` | informationalpostings.natfuel.com | Empire (Niagara/Chippawa) | **Playwright** (PeopleSoft CSV download) |
 
-`--pipeline fast` runs the 7 HTTP scrapers; `--pipeline slow` runs the 2 Playwright ones.
+`--pipeline fast` runs the 9 HTTP scrapers; `--pipeline slow` runs the 3 Playwright ones.
 
 > Playwright scrapers need: `pip install playwright && python -m playwright install chromium`
 
 ### `--date` support
-`kmi`/`tcenergy`, `williams`, `enbridge` honor `--date`. `et_ipost`, `williams_nwp`,
-`tceconnects`, `iroquois` only return the most-recent posted snapshot (their portals
-expose no date selector), so historical backfill is not possible for those.
+`kmi`/`tcenergy`, `williams`, `enbridge`, `tcplus`, `trellis` honor `--date`. `et_ipost`,
+`williams_nwp`, `tceconnects`, `iroquois`, `empire` only return the most-recent posted
+snapshot (their portals expose no date selector), so historical backfill is not possible
+for those.
 
 ## Install
 
@@ -141,11 +145,24 @@ tests/              pytest suite
    Cameron CIP, and private Sabine/Plaquemines feeders are off-EBB. Amber LNG totals are
    lower bounds — calibrate against EIA.
 2. **Texas-intrastate Mexico crossings** (Trans-Pecos, Comanche Trail, NET Mexico, Valley
-   Crossing) have no public daily OAC. CENAGAS monthly PDFs are the only free source
-   (parser skeleton in `tools/cenagas_pdf_backfill.py`, ~30-day lag).
-3. **Unit convention.** Portals publish Dth/d (≈ MMBtu/d); we treat Dth/d ≈ Mcf/d and
+   Crossing) are Texas-RRC (not FERC) regulated and have **no public daily OAC at all** —
+   a structural gap, not a scraping one. **Update (2026-05-29):** the CENAGAS monthly
+   "Volumen" PDF, previously assumed to carry these, is in fact EXTRACTION-only (domestic
+   E/N nodes); the US-border imports are separate "V" (importación) injection nodes whose
+   volumes are **not** in that free PDF. We verified the correct node identities against
+   CENAGAS's catalog (`cenagas_pdf_backfill.py --catalog`: NET Mexico = V061 RAMONES,
+   Valley Crossing = V074 MONTEGRANDE, etc.), but no free downloadable source of their
+   daily volumes is currently known. *Roadrunner* is the one interstate (FERC) Mexico-
+   export pipe, but ONEOK gates its OAC behind free myQuorum registration (no anonymous
+   public posting found), so it is not scrapeable without an account.
+3. **Canada interstate crossings — largely captured now.** `tcplus` adds Kingsgate (GTN,
+   ~2.0 Bcf/d), Emerson (Great Lakes ~1.45 + Viking via `trellis` ~0.4 Bcf/d) and St. Clair
+   (~0.65); `empire` adds Niagara/Chippawa (~0.3 Bcf/d, currently US→Canada). Remaining
+   gap: **Northern Border @ Port of Morgan** (~2 Bcf/d) — TC/ONEOK-operated, no resolvable
+   public EBB host found (likely behind myQuorum registration). See `docs/portal_notes.md`.
+4. **Unit convention.** Portals publish Dth/d (≈ MMBtu/d); we treat Dth/d ≈ Mcf/d and
    divide by 1000 for MMcf/d.
-4. **Scheduled quantities, not metered actuals.** EBBs post nominations, very close to
+5. **Scheduled quantities, not metered actuals.** EBBs post nominations, very close to
    physical flow on confirmed cycles but not custody-meter readings.
 
 ## License & scope

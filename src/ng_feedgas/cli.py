@@ -25,8 +25,8 @@ EXPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "exports"
 
 # Scraper groups for the intraday tasks. FAST = plain-HTTP scrapers (seconds each);
 # SLOW = Playwright scrapers that launch headless Chromium (30-60s each).
-FAST_SCRAPERS = ["kmi", "williams", "williams_nwp", "tcenergy", "enbridge", "et_tgc", "et_ipost"]
-SLOW_SCRAPERS = ["tceconnects", "iroquois"]
+FAST_SCRAPERS = ["kmi", "williams", "williams_nwp", "tcenergy", "enbridge", "et_tgc", "et_ipost", "tcplus", "trellis", "gasnom"]
+SLOW_SCRAPERS = ["tceconnects", "iroquois", "empire"]
 
 
 def _parse_date(s: str) -> date:
@@ -104,7 +104,8 @@ def cli(verbose: bool) -> None:
               type=click.Choice([
                   "kmi", "williams", "williams_nwp", "tcenergy",
                   "enbridge", "et_tgc", "et_ipost", "tceconnects",
-                  "iroquois", "all", "fast", "slow",
+                  "iroquois", "tcplus", "trellis", "empire", "gasnom",
+                  "all", "fast", "slow",
               ]),
               show_default=True,
               help='Run one scraper, "all", "fast" (HTTP only), or "slow" (Playwright only).')

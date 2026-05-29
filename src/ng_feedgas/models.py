@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Literal
 
-Cycle = Literal["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed"]
+Cycle = Literal["timely", "evening", "intraday1", "intraday2", "intraday3", "confirmed", "monthly"]
 Direction = Literal["receipt", "delivery"]
 
 

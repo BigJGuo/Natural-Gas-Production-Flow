@@ -110,6 +110,99 @@ most-recent posted snapshot. For historical-day data, the report has a date filt
 control in the UI that we don't yet drive. Today's data is fine; backfills will pull
 "latest" not "for-date".
 
+### 7. TC Energy "Ganesha" EBB — `tcplus.com`  (NEW, working)
+
+Verified 2026-05-29. Plain HTTP, no JS needed (FAST scraper). Hosts exactly four
+TC Energy pipelines: **GTN, Great Lakes, North Baja, Tuscarora** (Viking and
+Northern Border are NOT here — see below).
+
+The OAC "CSV" button POSTs to `https://www.tcplus.com/{PIPELINE}/Export/Generate`
+(pipeline path may contain a space, e.g. `Great Lakes`) with form fields:
+
+```
+serviceTypeName = Ganesha.InfoPost.Service.OperationalCapacity.OperationalCapacityService, Ganesha.InfoPost.Service
+filterTypeName  = Ganesha.InfoPost.ViewModels.GasDayAndCycleTypeFilterViewModel, Ganesha.InfoPost
+templateType    = 6
+exportType      = 1                  # 1=CSV 2=Excel 3=PDF 4=Txt 5=Tab
+filter.GasDay   = MM/DD/YY
+filter.CycleType= 1 Timely | 4 Evening | 2 Intraday1 | 3 Intraday2 | 5 Intraday3
+customExtension =
+```
+
+CSV = 3 metadata rows + 1 blank, then header at row index 4:
+`Loc Name, Loc, Loc Purp Desc, Loc/QTI, Flow Ind, DC, OPC, TSQ, OAC, IT, All Qty Avail`.
+TSQ is MMBtu/d → /1000 = MMcf/d. Honors `--date` and `--cycle`.
+
+| Pipeline | Loc | Loc Name | Crossing | Flow | TSQ (2026-05-29 eve) |
+|---|---|---|---|---|---|
+| GTN | 3498 | KINGSGATE | Kingsgate, ID (Canada import) | R | **2,008.7 MMcf/d** |
+| Great Lakes | 33975 | EMERSON RECEIPT | Emerson, MN (Canada import) | R | **1,447.6 MMcf/d** |
+| Great Lakes | 11772 | ST CLAIR DELIVERY | St. Clair / Sarnia ON (export) | D | **644.7 MMcf/d** |
+| North Baja | 336408 | OGILBY DEL | Ogilby, CA (Mexico export) | D | 420.6 — *NOT loaded: same gas as the existing EPNG North Baja point; would double-count* |
+
+Scraper: [src/ng_feedgas/scrapers/tcplus.py](../src/ng_feedgas/scrapers/tcplus.py).
+Net effect: ~+4.1 Bcf/d of previously-missing Canada flow now captured daily.
+
+### 8. DT Midstream Trellis PTM — `dtmidstream.trellisenergy.com`  (NEW, working)
+
+Viking Gas Transmission (VGT, tspId=9) moved to DT Midstream's Trellis PTMS
+Nov-2025. The OAC report is PUBLIC (no login) via two JSON endpoints (verified
+2026-05-29):
+
+1. List postings (jqGrid; needs `Referer` = the viewInfoPostingReportTable page):
+   `/ptms/public/infopost/getInfoPostRpts.do?tspId=9&rptId=2&downloadInd=0&searchInd=0&showLatestInd=0&_search=false&nd=1&rows=200&page=1&sidx=&sord=asc&_=1`
+   → `{"rows":[{"id":67505000000,"formattedGasDay":"05/29/2026","cycleCode":"Evening",...}]}`.
+2. Data file: `/ptms/public/infopost/getInfoPostRptTxtFile.do?infoPostDataId={id}&level=1`
+   → JSON with `columnNames` + an `xmlData` `<row><cell>…` string. Columns:
+   Loc Name, Loc, Loc Prop, Loc Purp Desc, Flow Ind, Loc/QTI, All Qty Avail, DC,
+   OPC, TSQ, OAC, IT, Qty Reason. TSQ MMBtu/d → /1000 MMcf/d.
+
+| Loc | Loc Name | Crossing | Flow | TSQ (2026-05-29 eve) |
+|---|---|---|---|---|
+| 33973 | Emerson | Emerson, MN (Canada import) | R | **400.2 MMcf/d** |
+
+Scraper: [src/ng_feedgas/scrapers/trellis.py](../src/ng_feedgas/scrapers/trellis.py)
+(FAST/HTTP). Combined with Great Lakes, the Emerson terminal is now ~1.85 Bcf/d.
+
+### 9. National Fuel PeopleSoft — Empire Pipeline  (NEW, working, Playwright)
+
+Empire's OAC is a PUBLIC (no-login) PeopleSoft component:
+`https://sbsprd2.natfuel.com/psc/sbsprd/NFSBS/SBSPRD/c/NFOM_INFORMATIONAL_POSTINGS.NFOC_OPER_AVAIL_1.GBL`.
+The page exposes CSV-download links `NF_FILE_ATT_WRK_NF_CSV_DWN_BTN$0/$1/$2`
+($0=Evening, $1=Timely, $2=Prelim). Plain `requests` ICAction POSTs just re-render
+the page; the file only comes via the browser download, so we drive it with
+**Playwright** + `expect_download()`. CSV has ~20 metadata lines then a header
+(Loc Name, Loc, …, Total Scheduled Quantity, Flow Indicator).
+
+| Loc | Loc Name | Crossing | Flow | TSQ (2026-05-29) |
+|---|---|---|---|---|
+| 421079 | TCPL - Niagara* | Niagara/Chippawa (Empire↔TC) | D | **315.3 MMcf/d** (US→Canada; receipt side 0) |
+
+Scraper: [src/ng_feedgas/scrapers/empire.py](../src/ng_feedgas/scrapers/empire.py)
+(SLOW/Playwright). Distinct pipe from the TGP Niagara delivery captured via KMI.
+
+### Genuinely blocked (no anonymous public source found)
+
+- **Roadrunner Gas Transmission** (Waha→San Elizario→Mexico) and **Northern Border**
+  (Port of Morgan, MT, ~2 Bcf/d) are both **ONEOK**-affiliated. ONEOK routes all
+  pipeline data — including FERC postings — through the **myQuorum Customer Portal**
+  (`qptmintra.oneok.com` → SecureAuth login), which requires free registration. No
+  anonymous public OAC posting was found (oneok.com/rgt has no infopost link;
+  northernborder.com does not resolve). **Blocked without an account** — not built.
+
+### CENAGAS intrastate-Mexico volumes — corrected finding (2026-05-29)
+
+The free CENAGAS monthly "Volumen" PDF is **extraction-only** (domestic E/N nodes,
+e.g. E016=AEROPUERTO). It does **not** contain the US-border IMPORT (injection)
+volumes. Those are the "V" series (Origen del Gas = Importación) in CENAGAS's node
+catalog (`/GestionComercial/Nodos`); the correct crosswalk is:
+`Mexico - NET Mexico = V061 RAMONES` (Net Mexico Pipeline, Camargo),
+`Mexico - Valley Crossing = V074 MONTEGRANDE` (Sur de Texas-Tuxpan marine),
+plus V033 Tennessee / V032,V034 KM Border / V037 KM Texas / V067 Houston Pipeline-ET.
+But these V-node daily volumes are **not** in the free PDF and no other free
+downloadable source was found, so intrastate-Mexico export flows remain unloadable.
+Run `python tools/cenagas_pdf_backfill.py --catalog` to reproduce the crosswalk.
+
 ## Remaining gaps and why
 
 ### Cove Point

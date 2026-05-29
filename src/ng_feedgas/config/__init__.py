@@ -42,7 +42,9 @@ def categorize(terminal: str) -> str:
 CANADA_IMPORT_TERMINALS = {
     "Canada - Sumas (Northwest)",
     "Canada - Waddington (Iroquois)",
-    "Canada - Emerson (Viking/GreatLakes/NorthernBorder)",
+    "Canada - Emerson (GreatLakes/Viking)",
+    "Canada - Kingsgate (GTN)",
+    "Canada - Port of Morgan (Northern Border)",
 }
 
 

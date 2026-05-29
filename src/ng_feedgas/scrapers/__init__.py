@@ -9,6 +9,10 @@ from .energytransfer import EnergyTransferTGCScraper
 from .et_ipost import EnergyTransferIPostScraper
 from .tceconnects import TCeConnectsScraper
 from .iroquois import IroquoisScraper
+from .tcplus import TCPlusScraper
+from .trellis import TrellisScraper
+from .empire import EmpireScraper
+from .gasnom import GasNomScraper
 
 SCRAPERS: dict[str, type[BaseScraper]] = {
     "kmi": KMIScraper,
@@ -20,6 +24,10 @@ SCRAPERS: dict[str, type[BaseScraper]] = {
     "et_ipost": EnergyTransferIPostScraper,
     "tceconnects": TCeConnectsScraper,
     "iroquois": IroquoisScraper,
+    "tcplus": TCPlusScraper,
+    "trellis": TrellisScraper,
+    "empire": EmpireScraper,
+    "gasnom": GasNomScraper,
 }
 
 __all__ = [
@@ -30,5 +38,9 @@ __all__ = [
     "EnergyTransferTGCScraper", "EnergyTransferIPostScraper",
     "TCeConnectsScraper",
     "IroquoisScraper",
+    "TCPlusScraper",
+    "TrellisScraper",
+    "EmpireScraper",
+    "GasNomScraper",
     "SCRAPERS",
 ]
